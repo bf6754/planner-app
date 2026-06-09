@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import C from "./theme.js";
 import { DAYS, MONTHS, WEEKDAYS, WEEKEND, ymd, fmtDate, fmtRange, getMonday, addDays, dayIndex, currentWeekKey } from "./lib/dates.js";
 import { uid, mkTask, mkSub, floatDone, placeInGroup } from "./lib/tasks.js";
-import { loadMeta, saveMeta, fetchAllWeeks, upsertWeek, checkCarryOver, getLeftovers } from "./data/store.js";
+import { loadMetaLocal, saveMetaLocal, fetchAllWeeks, upsertWeek, fetchMeta, upsertMeta, checkCarryOver, getLeftovers } from "./data/store.js";
+import { supabase } from "./data/supabase.js";
 import CarryOverModal from "./components/CarryOverModal.jsx";
 import Circle from "./components/Circle.jsx";
 import { Arrow, Plus, Chev } from "./components/Icons.jsx";
@@ -27,7 +28,7 @@ const delBtn = {
 export default function App({ user, onSignOut }) {
   const [weeks,        setWeeks]        = useState({});
   const [dataLoading,  setDataLoading]  = useState(true);
-  const [meta,         setMeta]         = useState(loadMeta);
+  const [meta,         setMeta]         = useState(loadMetaLocal); // local fallback until Supabase loads
   const [monday,       setMonday]       = useState(() => { const k = currentWeekKey(); const [y,m,d] = k.split("-").map(Number); return new Date(y, m-1, d); });
   const [hideDone,     setHideDone]     = useState(false);
   const [drafts,       setDrafts]       = useState({});
@@ -48,22 +49,23 @@ export default function App({ user, onSignOut }) {
   const dropMode     = useRef(null);
   const prevWeeksRef = useRef(null); // tracks last-saved weeks to diff on change
 
-  // ── load all weeks from Supabase on mount ──────────────────────────────────
+  // ── load weeks + meta from Supabase on mount ──────────────────────────────
   useEffect(() => {
-    fetchAllWeeks().then((data) => {
+    Promise.all([fetchAllWeeks(), fetchMeta()]).then(([data, remoteMeta]) => {
       const nowKey = currentWeekKey();
       if (!data[nowKey]) data[nowKey] = [];
       setWeeks(data);
       prevWeeksRef.current = data;
 
-      // carry-over check (after data is loaded)
-      const { shouldCarry, sourceKey } = checkCarryOver(data, meta);
+      // carry-over check with authoritative remote meta
+      const { shouldCarry, sourceKey } = checkCarryOver(data, remoteMeta);
       if (shouldCarry) setCarry(sourceKey);
 
       // record this open
-      const newMeta = { ...meta, lastOpenedKey: nowKey };
-      saveMeta(newMeta);
+      const newMeta = { ...remoteMeta, lastOpenedKey: nowKey };
       setMeta(newMeta);
+      saveMetaLocal(newMeta);
+      upsertMeta(user.id, newMeta);
 
       setDataLoading(false);
     }).catch((err) => {
@@ -83,7 +85,27 @@ export default function App({ user, onSignOut }) {
     prevWeeksRef.current = weeks;
   }, [weeks]);
 
-  useEffect(() => { saveMeta(meta); }, [meta]);
+  // ── real-time sync: apply changes made on other devices ───────────────────
+  useEffect(() => {
+    if (dataLoading) return;
+    const channel = supabase
+      .channel("weeks-sync")
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "weeks" },
+        (payload) => {
+          const row = payload.new;
+          if (!row || row.week_key === "__meta__") return;
+          // Update local state and prevWeeksRef (so save effect skips it)
+          setWeeks((prev) => {
+            const next = { ...prev, [row.week_key]: row.tasks };
+            prevWeeksRef.current = next;
+            return next;
+          });
+        }
+      )
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [dataLoading]);
 
   useEffect(() => {
     const on = () => setVw(window.innerWidth);
@@ -293,12 +315,18 @@ export default function App({ user, onSignOut }) {
       });
       return { ...w, [nowKey]: cur, [sourceKey]: src };
     });
-    setMeta((m) => ({ ...m, carriedKeys: [...(m.carriedKeys || []), nowKey] }));
+    setMeta((m) => {
+      const next = { ...m, carriedKeys: [...(m.carriedKeys || []), nowKey] };
+      saveMetaLocal(next); upsertMeta(user.id, next); return next;
+    });
     setCarry(null);
   }
 
   function dismissCarry() {
-    setMeta((m) => ({ ...m, carriedKeys: [...(m.carriedKeys || []), nowKey] }));
+    setMeta((m) => {
+      const next = { ...m, carriedKeys: [...(m.carriedKeys || []), nowKey] };
+      saveMetaLocal(next); upsertMeta(user.id, next); return next;
+    });
     setCarry(null);
   }
 

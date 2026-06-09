@@ -1,9 +1,9 @@
-export { loadMeta, saveMeta, fetchAllWeeks, upsertWeek } from "./storage.js";
+export { fetchAllWeeks, upsertWeek, fetchMeta, upsertMeta, loadMetaLocal, saveMetaLocal } from "./storage.js";
 
 import { currentWeekKey } from "../lib/dates.js";
 
 export function checkCarryOver(weeks, meta) {
-  const nowKey    = currentWeekKey();
+  const nowKey = currentWeekKey();
   if (meta.carriedKeys && meta.carriedKeys.includes(nowKey))
     return { shouldCarry: false, sourceKey: null };
   const sourceKey = meta.lastOpenedKey && meta.lastOpenedKey !== nowKey
