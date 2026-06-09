@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import C from "./theme.js";
 import { DAYS, MONTHS, WEEKDAYS, WEEKEND, ymd, fmtDate, fmtRange, getMonday, addDays, dayIndex, currentWeekKey } from "./lib/dates.js";
 import { uid, mkTask, mkSub, floatDone, placeInGroup } from "./lib/tasks.js";
-import { loadWeeks, saveWeeks, loadMeta, saveMeta, checkCarryOver, getLeftovers } from "./data/store.js";
+import { loadMeta, saveMeta, fetchAllWeeks, upsertWeek, checkCarryOver, getLeftovers } from "./data/store.js";
 import CarryOverModal from "./components/CarryOverModal.jsx";
 import Circle from "./components/Circle.jsx";
 import { Arrow, Plus, Chev } from "./components/Icons.jsx";
@@ -24,27 +24,14 @@ const delBtn = {
   fontFamily: "inherit",
 };
 
-// ── bootstrap ─────────────────────────────────────────────────────────────────
-function initState() {
-  const weeks  = loadWeeks();
-  const meta   = loadMeta();
-  const nowKey = currentWeekKey();
-  if (!weeks[nowKey]) weeks[nowKey] = [];
-  const { shouldCarry, sourceKey } = checkCarryOver(weeks, meta);
-  const newMeta = { ...meta, lastOpenedKey: nowKey };
-  saveMeta(newMeta);
-  return { weeks, meta: newMeta, shouldCarry, sourceKey };
-}
-
-export default function App() {
-  const init = useRef(initState());
-
-  const [weeks,        setWeeks]        = useState(init.current.weeks);
-  const [meta,         setMeta]         = useState(init.current.meta);
+export default function App({ user, onSignOut }) {
+  const [weeks,        setWeeks]        = useState({});
+  const [dataLoading,  setDataLoading]  = useState(true);
+  const [meta,         setMeta]         = useState(loadMeta);
   const [monday,       setMonday]       = useState(() => { const k = currentWeekKey(); const [y,m,d] = k.split("-").map(Number); return new Date(y, m-1, d); });
   const [hideDone,     setHideDone]     = useState(false);
   const [drafts,       setDrafts]       = useState({});
-  const [carry,        setCarry]        = useState(init.current.shouldCarry ? init.current.sourceKey : null);
+  const [carry,        setCarry]        = useState(null);
   const [overId,       setOverId]       = useState(null);  // reorder drop target (top edge) — shared for tasks and subtasks
   const [subDropId,    setSubDropId]    = useState(null);  // task-body nest target
   const [hoveredId,    setHoveredId]    = useState(null);
@@ -57,11 +44,47 @@ export default function App() {
   const [ov,           setOv]           = useState({});
   const [vw,           setVw]           = useState(() => window.innerWidth);
 
-  const drag     = useRef(null);
-  const dropMode = useRef(null); // { type: "reorder"|"subtask", id }
+  const drag         = useRef(null);
+  const dropMode     = useRef(null);
+  const prevWeeksRef = useRef(null); // tracks last-saved weeks to diff on change
 
-  useEffect(() => { saveWeeks(weeks); }, [weeks]);
-  useEffect(() => { saveMeta(meta);   }, [meta]);
+  // ── load all weeks from Supabase on mount ──────────────────────────────────
+  useEffect(() => {
+    fetchAllWeeks().then((data) => {
+      const nowKey = currentWeekKey();
+      if (!data[nowKey]) data[nowKey] = [];
+      setWeeks(data);
+      prevWeeksRef.current = data;
+
+      // carry-over check (after data is loaded)
+      const { shouldCarry, sourceKey } = checkCarryOver(data, meta);
+      if (shouldCarry) setCarry(sourceKey);
+
+      // record this open
+      const newMeta = { ...meta, lastOpenedKey: nowKey };
+      saveMeta(newMeta);
+      setMeta(newMeta);
+
+      setDataLoading(false);
+    }).catch((err) => {
+      console.error("Failed to load data:", err);
+      setDataLoading(false);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── save only the weeks that changed ──────────────────────────────────────
+  useEffect(() => {
+    if (dataLoading || prevWeeksRef.current === null) return;
+    const prev = prevWeeksRef.current;
+    Object.keys(weeks).forEach((k) => {
+      if (weeks[k] !== prev[k]) upsertWeek(user.id, k, weeks[k]);
+    });
+    prevWeeksRef.current = weeks;
+  }, [weeks]);
+
+  useEffect(() => { saveMeta(meta); }, [meta]);
+
   useEffect(() => {
     const on = () => setVw(window.innerWidth);
     window.addEventListener("resize", on);
@@ -654,6 +677,14 @@ export default function App() {
   const carryLeftovers = carry ? getLeftovers(weeks, carry) : [];
 
   // ── render ─────────────────────────────────────────────────────────────────
+  if (dataLoading) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: C.bg, fontFamily: "'Inter','Helvetica Neue',Helvetica,Arial,sans-serif" }}>
+        <span style={{ color: C.sub, fontSize: 14 }}>Loading your tasks…</span>
+      </div>
+    );
+  }
+
   return (
     <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'Inter','Helvetica Neue',Helvetica,Arial,sans-serif", color: C.ink, padding: "20px 24px 40px" }}>
       <style>{`
@@ -688,6 +719,7 @@ export default function App() {
             style={{ ...ghost, background: hideDone ? C.done : "transparent", color: hideDone ? C.doneInk : C.sub, borderColor: hideDone ? C.done : C.line2 }}>
             {hideDone ? "Show done" : "Hide done"}
           </button>
+          <button onClick={onSignOut} title={`Signed in as ${user.email}`} style={{ ...ghost, fontSize: 11.5 }}>Sign out</button>
         </div>
       </div>
 
