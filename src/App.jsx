@@ -49,6 +49,7 @@ export default function App() {
   const [subDropId, setSubDropId] = useState(null);   // subtask drop target (body)
   const [hoveredId, setHoveredId] = useState(null);   // for delete / add-subtask buttons
   const [addSubFor, setAddSubFor] = useState(null);   // task id with inline subtask input open
+  const [subMode,   setSubMode]   = useState(new Set()); // add-slot targets in subtask mode
   const [wkOpen,    setWkOpen]    = useState(false);
   const [ov,        setOv]        = useState({});
   const [vw,        setVw]        = useState(() => window.innerWidth);
@@ -110,7 +111,7 @@ export default function App() {
     setDraft(target, "");
   }
 
-  // Tab in add slot: create draft as subtask of the last task in that context.
+  // Enter in subtask mode: create draft as subtask of the last task in that context.
   function addTaskAsSubtask(target) {
     const text = (drafts[target] || "").trim(); if (!text) return;
     const lastTask = target === "week"
@@ -119,7 +120,11 @@ export default function App() {
     if (!lastTask) { addTask(target); return; }
     update(lastTask.id, (t) => ({ ...t, subtasks: [...t.subtasks, mkSub(text)] }));
     setDraft(target, "");
+    // stay in subtask mode so user can keep adding subtasks with Enter
   }
+
+  const toggleSubMode = (target) =>
+    setSubMode((s) => { const n = new Set(s); n.has(target) ? n.delete(target) : n.add(target); return n; });
 
   function addSubtask(parentId) {
     const key2 = `sub-${parentId}`;
@@ -283,12 +288,13 @@ export default function App() {
         onDragStart={(e) => { drag.current = { t: "task", id: task.id }; e.dataTransfer.effectAllowed = "move"; }}
         onDragOver={(e) => {
           e.preventDefault();
-          if (view !== "week" || drag.current?.t !== "task" || drag.current?.id === task.id) return;
+          if (drag.current?.t !== "task" || drag.current?.id === task.id) return;
           const rect = e.currentTarget.getBoundingClientRect();
-          if ((e.clientY - rect.top) / rect.height < 0.38) {
+          const isTop = (e.clientY - rect.top) / rect.height < 0.38;
+          if (isTop && view === "week") {
             dropMode.current = { type: "reorder", id: task.id };
             setOverId(task.id); setSubDropId(null);
-          } else {
+          } else if (!isTop) {
             dropMode.current = { type: "subtask", id: task.id };
             setSubDropId(task.id); setOverId(null);
           }
@@ -298,10 +304,13 @@ export default function App() {
           setSubDropId((o) => o === task.id ? null : o);
         }}
         onDrop={(e) => {
-          if (view === "week" && drag.current?.t === "task") {
+          if (drag.current?.t !== "task") return;
+          if (dropMode.current?.type === "subtask" && dropMode.current?.id === task.id) {
+            e.stopPropagation(); // prevent day column from claiming the task
+            dropAsSubtask(task.id);
+          } else if (view === "week") {
             e.stopPropagation();
-            if (dropMode.current?.type === "subtask" && dropMode.current?.id === task.id) dropAsSubtask(task.id);
-            else { reorder(drag.current.id, task.id); cleanupDrag(); }
+            reorder(drag.current.id, task.id); cleanupDrag();
           }
         }}
         style={{
@@ -317,15 +326,23 @@ export default function App() {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span style={{ flex: 1, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word" }}>{task.text}</span>
+              <span style={{ flex: 1, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word" }}>
+                {task.text}
+                {/* add subtask button — sits inline right after the text */}
+                {hovered && addSubFor !== task.id && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAddSubFor(task.id);
+                      setTimeout(() => document.getElementById(`add-sub-${task.id}`)?.focus(), 0);
+                    }}
+                    title="Add subtask"
+                    style={{ ...delBtn, fontSize: 10.5, opacity: 0.4, marginLeft: 6, verticalAlign: "baseline" }}>
+                    + sub
+                  </button>
+                )}
+              </span>
               {view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500 }}>{task.claimedDay}</span>}
-              {/* add subtask button */}
-              {hovered && addSubFor !== task.id && (
-                <button onClick={(e) => { e.stopPropagation(); setAddSubFor(task.id); }} title="Add subtask"
-                  style={{ ...delBtn, fontSize: 11, opacity: 0.45, whiteSpace: "nowrap" }}>
-                  + sub
-                </button>
-              )}
               {/* delete task button */}
               {hovered && (
                 <button onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete task" style={delBtn}>×</button>
@@ -356,7 +373,7 @@ export default function App() {
               <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 8, marginTop: 5 }}>
                 <span style={{ width: view === "day" ? 14 : 15, height: view === "day" ? 14 : 15, minWidth: view === "day" ? 14 : 15, borderRadius: "50%", border: `2px dashed ${C.line2}`, flexShrink: 0 }} />
                 <input
-                  autoFocus
+                  id={`add-sub-${task.id}`}
                   value={drafts[`sub-${task.id}`] || ""}
                   onChange={(e) => setDraft(`sub-${task.id}`, e.target.value)}
                   onKeyDown={(e) => {
@@ -395,19 +412,29 @@ export default function App() {
   }
 
   function addSlot(target, compact) {
+    const inSubMode = subMode.has(target);
+    const sz = compact ? 16 : 18;
     return (
-      <div key="add" style={{ display: "flex", alignItems: "center", gap: 9, padding: compact ? "7px 2px" : "9px 4px" }}>
-        <span style={{ width: compact ? 16 : 18, height: compact ? 16 : 18, minWidth: compact ? 16 : 18, borderRadius: "50%", border: `2px dashed ${C.line2}` }} />
+      <div key="add" style={{ display: "flex", alignItems: "center", gap: 9, padding: compact ? "7px 2px" : "9px 4px", paddingLeft: inSubMode ? (compact ? 26 : 30) : undefined }}>
+        <span style={{
+          width: sz, height: sz, minWidth: sz, borderRadius: "50%",
+          border: `2px dashed ${inSubMode ? C.carryDot : C.line2}`,
+          flexShrink: 0,
+        }} />
         <input
           id={"add-" + target}
           value={drafts[target] || ""}
           onChange={(e) => setDraft(target, e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") addTask(target);
-            if (e.key === "Tab") { e.preventDefault(); addTaskAsSubtask(target); }
+            if (e.key === "Enter") {
+              if (inSubMode) addTaskAsSubtask(target);
+              else addTask(target);
+            }
+            if (e.key === "Tab") { e.preventDefault(); toggleSubMode(target); }
+            if (e.key === "Escape" && inSubMode) toggleSubMode(target);
           }}
-          placeholder="New task"
-          style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: compact ? 13 : 14, color: C.ink, fontFamily: "inherit" }}
+          placeholder={inSubMode ? "New subtask (Tab to exit)" : "New task · Tab to add as subtask"}
+          style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: compact ? 13 : 14, color: inSubMode ? C.carryInk : C.ink, fontFamily: "inherit" }}
         />
       </div>
     );
