@@ -7,11 +7,6 @@ import CarryOverModal from "./components/CarryOverModal.jsx";
 import Circle from "./components/Circle.jsx";
 import { Arrow, Plus, Chev } from "./components/Icons.jsx";
 
-// ── inline SVGs ──────────────────────────────────────────────────────────────
-const Check = ({ s = 11, c = "#fff" }) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-);
-
 // ── nav / ghost button styles ─────────────────────────────────────────────────
 const navBtn = {
   width: 28, height: 28, borderRadius: 7, border: `1px solid ${C.line2}`,
@@ -23,55 +18,57 @@ const ghost = {
   borderRadius: 8, padding: "6px 13px", fontSize: 12.5,
   fontWeight: 600, cursor: "pointer", color: C.sub, fontFamily: "inherit",
 };
+const delBtn = {
+  background: "none", border: "none", cursor: "pointer", padding: "0 3px",
+  color: C.sub, fontSize: 15, lineHeight: 1, opacity: 0.5, flexShrink: 0,
+  fontFamily: "inherit",
+};
 
 // ── bootstrap data ────────────────────────────────────────────────────────────
 function initState() {
-  const weeks = loadWeeks();
-  const meta  = loadMeta();
+  const weeks  = loadWeeks();
+  const meta   = loadMeta();
   const nowKey = currentWeekKey();
-
-  // First-ever open → seed an empty week so the UI has something to show
   if (!weeks[nowKey]) weeks[nowKey] = [];
-
   const { shouldCarry, sourceKey } = checkCarryOver(weeks, meta);
-
-  // Record this open
   const newMeta = { ...meta, lastOpenedKey: nowKey };
   saveMeta(newMeta);
-
   return { weeks, meta: newMeta, shouldCarry, sourceKey };
 }
 
 export default function App() {
   const init = useRef(initState());
 
-  const [weeks,    setWeeks]    = useState(init.current.weeks);
-  const [meta,     setMeta]     = useState(init.current.meta);
-  const [monday,   setMonday]   = useState(() => { const k = currentWeekKey(); const [y,m,d] = k.split("-").map(Number); return new Date(y, m-1, d); });
-  const [hideDone, setHideDone] = useState(false);
-  const [drafts,   setDrafts]   = useState({});
-  const [carry,    setCarry]    = useState(init.current.shouldCarry ? init.current.sourceKey : null);
-  const [overId,   setOverId]   = useState(null);
-  const [wkOpen,   setWkOpen]   = useState(false);
-  const [ov,       setOv]       = useState({}); // "weekKey:Day" -> bool
-  const [vw,       setVw]       = useState(() => window.innerWidth);
-  const drag = useRef(null);
+  const [weeks,     setWeeks]     = useState(init.current.weeks);
+  const [meta,      setMeta]      = useState(init.current.meta);
+  const [monday,    setMonday]    = useState(() => { const k = currentWeekKey(); const [y,m,d] = k.split("-").map(Number); return new Date(y, m-1, d); });
+  const [hideDone,  setHideDone]  = useState(false);
+  const [drafts,    setDrafts]    = useState({});
+  const [carry,     setCarry]     = useState(init.current.shouldCarry ? init.current.sourceKey : null);
+  const [overId,    setOverId]    = useState(null);   // reorder drop target (top edge)
+  const [subDropId, setSubDropId] = useState(null);   // subtask drop target (body)
+  const [hoveredId, setHoveredId] = useState(null);   // for delete / add-subtask buttons
+  const [addSubFor, setAddSubFor] = useState(null);   // task id with inline subtask input open
+  const [wkOpen,    setWkOpen]    = useState(false);
+  const [ov,        setOv]        = useState({});
+  const [vw,        setVw]        = useState(() => window.innerWidth);
 
-  // Persist whenever weeks or meta change
+  const drag     = useRef(null);
+  const dropMode = useRef(null); // { type: "reorder"|"subtask", id } — ref avoids stale closure in onDrop
+
   useEffect(() => { saveWeeks(weeks); }, [weeks]);
   useEffect(() => { saveMeta(meta);   }, [meta]);
-
   useEffect(() => {
     const on = () => setVw(window.innerWidth);
     window.addEventListener("resize", on);
     return () => window.removeEventListener("resize", on);
   }, []);
 
-  const key    = ymd(monday);
-  const tasks  = weeks[key] || [];
-  const nowKey = currentWeekKey();
-  const isThis = key === nowKey;
-  const today  = new Date(); today.setHours(0, 0, 0, 0);
+  const key      = ymd(monday);
+  const tasks    = weeks[key] || [];
+  const nowKey   = currentWeekKey();
+  const isThis   = key === nowKey;
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
   const todayYmd = ymd(today);
   const isToday  = (day) => ymd(addDays(monday, DAYS.indexOf(day))) === todayYmd;
   const mode     = vw >= 1340 ? "six" : vw >= 900 ? "five" : "one";
@@ -87,7 +84,6 @@ export default function App() {
     const t = tasks.find((x) => x.id === id); if (!t) return;
     const nd = !t.done;
     update(id, (x) => ({ ...x, done: nd, subtasks: x.subtasks.length ? x.subtasks.map((s) => ({ ...s, done: nd })) : x.subtasks }));
-    // Reflect back to origin week for multi-hop carry tracking
     if (t.originId && t.originKey) {
       setList(t.originKey, (l) => l.map((o) => o.id === t.originId ? { ...o, checkedAway: nd ? fmtDate(today) : null } : o));
     }
@@ -100,10 +96,37 @@ export default function App() {
     });
   }
 
+  function deleteTask(id) {
+    setList(key, (l) => l.filter((t) => t.id !== id));
+  }
+
+  function deleteSub(pid, sid) {
+    update(pid, (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) }));
+  }
+
   function addTask(target) {
     const text = (drafts[target] || "").trim(); if (!text) return;
     setList(key, (l) => placeInGroup(l, mkTask(text, { claimedDay: target === "week" ? null : target })));
     setDraft(target, "");
+  }
+
+  // Tab in add slot: create draft as subtask of the last task in that context.
+  function addTaskAsSubtask(target) {
+    const text = (drafts[target] || "").trim(); if (!text) return;
+    const lastTask = target === "week"
+      ? tasks.at(-1)
+      : tasks.filter((t) => t.claimedDay === target).at(-1) ?? tasks.at(-1);
+    if (!lastTask) { addTask(target); return; }
+    update(lastTask.id, (t) => ({ ...t, subtasks: [...t.subtasks, mkSub(text)] }));
+    setDraft(target, "");
+  }
+
+  function addSubtask(parentId) {
+    const key2 = `sub-${parentId}`;
+    const text  = (drafts[key2] || "").trim(); if (!text) return;
+    update(parentId, (t) => ({ ...t, subtasks: [...t.subtasks, mkSub(text)] }));
+    setDraft(key2, "");
+    setAddSubFor(null);
   }
 
   function claim(id, day) {
@@ -122,15 +145,18 @@ export default function App() {
     if (id === targetId) return;
     setList(key, (l) => {
       const from = l.findIndex((t) => t.id === id); if (from < 0) return l;
-      const t = l[from];
+      const t    = l[from];
       const rest = [...l.slice(0, from), ...l.slice(from + 1)];
-      const to = rest.findIndex((x) => x.id === targetId);
-      const out = [...rest]; out.splice(to, 0, t); return out;
+      const to   = rest.findIndex((x) => x.id === targetId);
+      const out  = [...rest]; out.splice(to, 0, t); return out;
     });
   }
 
   // ── drag helpers ───────────────────────────────────────────────────────────
-  const cleanupDrag = () => { drag.current = null; setOverId(null); };
+  const cleanupDrag = () => {
+    drag.current = null; dropMode.current = null;
+    setOverId(null); setSubDropId(null);
+  };
 
   function dropToDay(day) {
     const d = drag.current; if (!d) return;
@@ -140,14 +166,40 @@ export default function App() {
 
   function dropToWeekly() {
     const d = drag.current; if (!d) return;
-    d.t === "task" ? claim(d.id, null) : claimSub(d.pid, d.sid, null);
+    if (d.t === "task") {
+      claim(d.id, null);
+    } else {
+      // Promote subtask to its own top-level task (atomic update)
+      setList(key, (l) => {
+        const parent = l.find((t) => t.id === d.pid);
+        const sub    = parent?.subtasks.find((s) => s.id === d.sid);
+        if (!sub) return l;
+        return [
+          ...l.map((t) => t.id === d.pid ? { ...t, subtasks: t.subtasks.filter((s) => s.id !== d.sid) } : t),
+          mkTask(sub.text, { claimedDay: sub.claimedDay }),
+        ];
+      });
+    }
+    cleanupDrag();
+  }
+
+  // Drag a task onto the body of another task → nest it as a subtask.
+  function dropAsSubtask(parentId) {
+    const d = drag.current; if (!d || d.t !== "task" || d.id === parentId) { cleanupDrag(); return; }
+    setList(key, (l) => {
+      const child = l.find((t) => t.id === d.id); if (!child) return l;
+      // Flatten child's subtasks into parent as well
+      const newSubs = [mkSub(child.text, child.done), ...child.subtasks.map((s) => mkSub(s.text, s.done))];
+      return l
+        .filter((t) => t.id !== d.id)
+        .map((t) => t.id === parentId ? { ...t, subtasks: [...t.subtasks, ...newSubs] } : t);
+    });
     cleanupDrag();
   }
 
   // ── carry-over ─────────────────────────────────────────────────────────────
   const openCarryOver = () => {
     const { sourceKey } = checkCarryOver(weeks, { ...meta, carriedKeys: [] });
-    // Allow re-opening to show remaining leftovers
     const sk = sourceKey || meta.lastOpenedKey;
     if (sk && sk !== key) setCarry(sk);
   };
@@ -155,28 +207,22 @@ export default function App() {
   function confirmCarry(selected) {
     const sourceKey = carry;
     setWeeks((w) => {
-      const cur  = [...(w[nowKey] || [])];
-      const src  = (w[sourceKey] || []).map((t) => {
+      const cur = [...(w[nowKey] || [])];
+      const src = (w[sourceKey] || []).map((t) => {
         if (selected.has(t.id)) {
-          cur.push(mkTask(t.text, {
-            carried: true, originId: t.id, originKey: sourceKey,
-            subtasks: t.subtasks.map((s) => mkSub(s.text, false)),
-          }));
+          cur.push(mkTask(t.text, { carried: true, originId: t.id, originKey: sourceKey, subtasks: t.subtasks.map((s) => mkSub(s.text, false)) }));
           return { ...t, carriedAway: true };
         }
         return t;
       });
       return { ...w, [nowKey]: cur, [sourceKey]: src };
     });
-    const carriedKeys = [...(meta.carriedKeys || []), nowKey];
-    setMeta((m) => ({ ...m, carriedKeys }));
+    setMeta((m) => ({ ...m, carriedKeys: [...(m.carriedKeys || []), nowKey] }));
     setCarry(null);
   }
 
   function dismissCarry() {
-    // Mark as done for this week even if nothing selected
-    const carriedKeys = [...(meta.carriedKeys || []), nowKey];
-    setMeta((m) => ({ ...m, carriedKeys }));
+    setMeta((m) => ({ ...m, carriedKeys: [...(m.carriedKeys || []), nowKey] }));
     setCarry(null);
   }
 
@@ -218,7 +264,9 @@ export default function App() {
         : task.subtasks,
       (s) => s.done
     );
-    const txt = task.done ? C.sub : C.ink;
+    const txt      = task.done ? C.sub : C.ink;
+    const hovered  = hoveredId === task.id;
+    const isSubDrop = subDropId === task.id;
     let meta = null;
     if (view === "week") {
       if (task.checkedAway)
@@ -227,15 +275,39 @@ export default function App() {
         meta = <span style={{ color: C.sub }}>Carried over</span>;
     }
     const fs = view === "day" ? 13 : 14;
+
     return (
       <div key={task.id} draggable
+        onMouseEnter={() => setHoveredId(task.id)}
+        onMouseLeave={() => setHoveredId((h) => h === task.id ? null : h)}
         onDragStart={(e) => { drag.current = { t: "task", id: task.id }; e.dataTransfer.effectAllowed = "move"; }}
-        onDragOver={(e) => { e.preventDefault(); if (view === "week") setOverId(task.id); }}
-        onDragLeave={() => setOverId((o) => o === task.id ? null : o)}
-        onDrop={(e) => { if (view === "week" && drag.current?.t === "task") { e.stopPropagation(); reorder(drag.current.id, task.id); cleanupDrag(); } }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (view !== "week" || drag.current?.t !== "task" || drag.current?.id === task.id) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          if ((e.clientY - rect.top) / rect.height < 0.38) {
+            dropMode.current = { type: "reorder", id: task.id };
+            setOverId(task.id); setSubDropId(null);
+          } else {
+            dropMode.current = { type: "subtask", id: task.id };
+            setSubDropId(task.id); setOverId(null);
+          }
+        }}
+        onDragLeave={() => {
+          setOverId((o) => o === task.id ? null : o);
+          setSubDropId((o) => o === task.id ? null : o);
+        }}
+        onDrop={(e) => {
+          if (view === "week" && drag.current?.t === "task") {
+            e.stopPropagation();
+            if (dropMode.current?.type === "subtask" && dropMode.current?.id === task.id) dropAsSubtask(task.id);
+            else { reorder(drag.current.id, task.id); cleanupDrag(); }
+          }
+        }}
         style={{
           borderTop: overId === task.id ? `2px solid ${C.done}` : "2px solid transparent",
           borderBottom: `1px solid ${C.line}`,
+          background: isSubDrop ? "rgba(170,181,232,0.10)" : "transparent",
           padding: view === "day" ? "7px 2px" : "9px 4px",
           opacity: task.done ? 0.55 : 1, cursor: "grab",
         }}>
@@ -247,19 +319,54 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ flex: 1, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word" }}>{task.text}</span>
               {view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500 }}>{task.claimedDay}</span>}
+              {/* add subtask button */}
+              {hovered && addSubFor !== task.id && (
+                <button onClick={(e) => { e.stopPropagation(); setAddSubFor(task.id); }} title="Add subtask"
+                  style={{ ...delBtn, fontSize: 11, opacity: 0.45, whiteSpace: "nowrap" }}>
+                  + sub
+                </button>
+              )}
+              {/* delete task button */}
+              {hovered && (
+                <button onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete task" style={delBtn}>×</button>
+              )}
             </div>
             {meta && <div style={{ fontSize: 11, marginTop: 2 }}>{meta}</div>}
+            {/* subtasks list */}
             {subs.length > 0 && (
               <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 5, paddingLeft: 8 }}>
                 {subs.map((s) => (
                   <div key={s.id} draggable
+                    onMouseEnter={() => setHoveredId(s.id)}
+                    onMouseLeave={() => setHoveredId((h) => h === s.id ? null : h)}
                     onDragStart={(e) => { e.stopPropagation(); drag.current = { t: "sub", pid: task.id, sid: s.id }; e.dataTransfer.effectAllowed = "move"; }}
                     style={{ display: "flex", alignItems: "center", gap: 8, cursor: "grab" }}>
                     <Circle done={s.done} size={view === "day" ? 14 : 15} onClick={() => toggleSub(task.id, s.id)} />
                     <span style={{ flex: 1, fontSize: fs, color: s.done ? C.sub : "#52545d", textDecoration: s.done ? "line-through" : "none" }}>{s.text}</span>
                     {view === "week" && s.claimedDay && <span style={{ fontSize: 11, color: C.sub }}>{s.claimedDay}</span>}
+                    {hoveredId === s.id && (
+                      <button onClick={(e) => { e.stopPropagation(); deleteSub(task.id, s.id); }} title="Delete subtask" style={delBtn}>×</button>
+                    )}
                   </div>
                 ))}
+              </div>
+            )}
+            {/* inline add-subtask input */}
+            {addSubFor === task.id && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 8, marginTop: 5 }}>
+                <span style={{ width: view === "day" ? 14 : 15, height: view === "day" ? 14 : 15, minWidth: view === "day" ? 14 : 15, borderRadius: "50%", border: `2px dashed ${C.line2}`, flexShrink: 0 }} />
+                <input
+                  autoFocus
+                  value={drafts[`sub-${task.id}`] || ""}
+                  onChange={(e) => setDraft(`sub-${task.id}`, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addSubtask(task.id);
+                    if (e.key === "Escape") { setAddSubFor(null); setDraft(`sub-${task.id}`, ""); }
+                  }}
+                  onBlur={() => { if (!(drafts[`sub-${task.id}`] || "").trim()) setAddSubFor(null); }}
+                  placeholder="New subtask"
+                  style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: fs, color: C.ink, fontFamily: "inherit" }}
+                />
               </div>
             )}
           </div>
@@ -271,12 +378,17 @@ export default function App() {
   function subOnDay(task, sub) {
     return (
       <div key={sub.id} draggable
+        onMouseEnter={() => setHoveredId(sub.id)}
+        onMouseLeave={() => setHoveredId((h) => h === sub.id ? null : h)}
         onDragStart={(e) => { drag.current = { t: "sub", pid: task.id, sid: sub.id }; e.dataTransfer.effectAllowed = "move"; }}
         style={{ borderBottom: `1px solid ${C.line}`, padding: "7px 2px", opacity: sub.done ? 0.55 : 1, cursor: "grab" }}>
         <div style={{ fontSize: 10.5, fontStyle: "italic", color: C.sub, marginBottom: 3, marginLeft: 25 }}>{task.text}</div>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <Circle done={sub.done} size={16} onClick={() => toggleSub(task.id, sub.id)} />
-          <span style={{ fontSize: 13, color: sub.done ? C.sub : "#565860", textDecoration: sub.done ? "line-through" : "none" }}>{sub.text}</span>
+          <span style={{ flex: 1, fontSize: 13, color: sub.done ? C.sub : "#565860", textDecoration: sub.done ? "line-through" : "none" }}>{sub.text}</span>
+          {hoveredId === sub.id && (
+            <button onClick={(e) => { e.stopPropagation(); deleteSub(task.id, sub.id); }} title="Delete subtask" style={delBtn}>×</button>
+          )}
         </div>
       </div>
     );
@@ -290,7 +402,10 @@ export default function App() {
           id={"add-" + target}
           value={drafts[target] || ""}
           onChange={(e) => setDraft(target, e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") addTask(target); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") addTask(target);
+            if (e.key === "Tab") { e.preventDefault(); addTaskAsSubtask(target); }
+          }}
           placeholder="New task"
           style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: compact ? 13 : 14, color: C.ink, fontFamily: "inherit" }}
         />
@@ -370,10 +485,9 @@ export default function App() {
   );
   const weekendOpen = weekendHasContent || wkOpen;
   const weekendCols = mode === "one" ? "minmax(0,1fr)" : "repeat(2,minmax(0,1fr))";
-
   const carryLeftovers = carry ? getLeftovers(weeks, carry) : [];
 
-  // ── render ────────────────────────────────────────────────────────────────
+  // ── render ─────────────────────────────────────────────────────────────────
   return (
     <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'Inter','Helvetica Neue',Helvetica,Arial,sans-serif", color: C.ink, padding: "20px 24px 40px" }}>
       <style>{`
@@ -443,7 +557,7 @@ export default function App() {
         )}
       </div>
 
-      {/* weekend accordion (five / one column modes) */}
+      {/* weekend accordion */}
       {mode !== "six" && (
         <div style={{ marginTop: 12 }}>
           <button
