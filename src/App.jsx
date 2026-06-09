@@ -617,8 +617,8 @@ export default function App({ user, onSignOut }) {
             const raw = drafts[target] || "";
             if (e.key === "Enter") {
               if (inSubMode) {
-                if (!raw.trim()) exitSubMode(target); // empty Enter → exit subtask mode
-                else addTaskAsSubtask(target);
+                if (raw.trim()) addTaskAsSubtask(target);
+                // empty Enter stays in subtask mode
               } else {
                 addTask(target);
               }
