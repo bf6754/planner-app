@@ -14,11 +14,12 @@ export async function fetchAllWeeks() {
 }
 
 export async function upsertWeek(userId, weekKey, tasks, updatedAt) {
-  const { error } = await supabase.from("weeks").upsert(
+  const { data, error } = await supabase.from("weeks").upsert(
     { user_id: userId, week_key: weekKey, tasks, updated_at: updatedAt || new Date().toISOString() },
     { onConflict: "user_id,week_key" }
-  );
-  if (error) console.error("Supabase save error:", error.message);
+  ).select("updated_at");
+  if (error) { console.error("Supabase save error:", error.message); return null; }
+  return data?.[0]?.updated_at ?? null;
 }
 
 // ── Meta: per-user, stored in Supabase as a reserved row ─────────────────────

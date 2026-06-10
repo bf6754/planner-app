@@ -83,8 +83,10 @@ export default function App({ user, onSignOut }) {
     Object.keys(weeks).forEach((k) => {
       if (weeks[k] !== prev[k]) {
         const ts = new Date().toISOString();
-        ownSavesRef.current[k] = ts;
-        upsertWeek(user.id, k, weeks[k], ts);
+        ownSavesRef.current[k] = ts; // optimistic; updated below once DB confirms
+        upsertWeek(user.id, k, weeks[k], ts).then((dbTs) => {
+          if (dbTs) ownSavesRef.current[k] = dbTs;
+        });
       }
     });
     prevWeeksRef.current = weeks;
