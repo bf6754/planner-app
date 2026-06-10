@@ -196,7 +196,7 @@ export default function App({ user, onSignOut }) {
     if (!lastTask) { addTask(target); return; }
     update(lastTask.id, (t) => ({ ...t, subtasks: [...t.subtasks, mkSub(text)] }));
     setDraft(target, "");
-    // stay in subtask mode so user can keep pressing Enter for more subtasks
+    setTimeout(() => document.getElementById("add-" + target)?.focus(), 0);
   }
 
   function addSubtask(parentId) {
@@ -618,7 +618,7 @@ export default function App({ user, onSignOut }) {
             if (e.key === "Enter") {
               if (inSubMode) {
                 if (raw.trim()) addTaskAsSubtask(target);
-                // empty Enter stays in subtask mode
+                else exitSubMode(target); // empty Enter → back to parent mode
               } else {
                 addTask(target);
               }
