@@ -48,6 +48,7 @@ export default function App({ user, onSignOut }) {
   const dropMode     = useRef(null);
 
   const prevWeeksRef = useRef(null); // tracks last-saved weeks to diff on change
+  const ownSavesRef  = useRef({});   // week_key → timestamp of last save we sent
 
   // ── load weeks + meta from Supabase on mount ──────────────────────────────
   useEffect(() => {
@@ -80,7 +81,11 @@ export default function App({ user, onSignOut }) {
     if (dataLoading || prevWeeksRef.current === null) return;
     const prev = prevWeeksRef.current;
     Object.keys(weeks).forEach((k) => {
-      if (weeks[k] !== prev[k]) upsertWeek(user.id, k, weeks[k]);
+      if (weeks[k] !== prev[k]) {
+        const ts = new Date().toISOString();
+        ownSavesRef.current[k] = ts;
+        upsertWeek(user.id, k, weeks[k], ts);
+      }
     });
     prevWeeksRef.current = weeks;
   }, [weeks]);
@@ -95,7 +100,9 @@ export default function App({ user, onSignOut }) {
         (payload) => {
           const row = payload.new;
           if (!row || row.week_key === "__meta__") return;
-          // Update local state and prevWeeksRef (so save effect skips it)
+          // Skip if this is an echo of our own save (or an older one)
+          const ourTs = ownSavesRef.current[row.week_key];
+          if (ourTs && row.updated_at <= ourTs) return;
           setWeeks((prev) => {
             const next = { ...prev, [row.week_key]: row.tasks };
             prevWeeksRef.current = next;
@@ -244,10 +251,11 @@ export default function App({ user, onSignOut }) {
       const parent = l.find((t) => t.id === pid);
       const sub    = parent?.subtasks.find((s) => s.id === sid);
       if (!sub) return l;
-      return [
-        ...l.map((t) => t.id === pid ? { ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) } : t),
-        mkTask(sub.text, { claimedDay: sub.claimedDay }),
-      ];
+      const parentIdx = l.findIndex((t) => t.id === pid);
+      const newTask = mkTask(sub.text, { claimedDay: sub.claimedDay });
+      const result = l.map((t) => t.id === pid ? { ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) } : t);
+      result.splice(parentIdx + 1, 0, newTask);
+      return result;
     });
   }
 

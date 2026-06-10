@@ -13,9 +13,9 @@ export async function fetchAllWeeks() {
   return Object.fromEntries(data.map((r) => [r.week_key, r.tasks]));
 }
 
-export async function upsertWeek(userId, weekKey, tasks) {
+export async function upsertWeek(userId, weekKey, tasks, updatedAt) {
   const { error } = await supabase.from("weeks").upsert(
-    { user_id: userId, week_key: weekKey, tasks, updated_at: new Date().toISOString() },
+    { user_id: userId, week_key: weekKey, tasks, updated_at: updatedAt || new Date().toISOString() },
     { onConflict: "user_id,week_key" }
   );
   if (error) console.error("Supabase save error:", error.message);
