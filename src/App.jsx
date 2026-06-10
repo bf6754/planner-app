@@ -182,18 +182,18 @@ export default function App({ user, onSignOut }) {
     setTimeout(() => { const el = document.getElementById(`edit-sub-${k}`); el?.focus(); el?.select(); }, 0);
   }
 
-  function addTask(target) {
-    const text = (drafts[target] || "").trim(); if (!text) return;
+  function addTask(target, providedText) {
+    const text = (providedText ?? drafts[target] ?? "").trim(); if (!text) return;
     setList(key, (l) => placeInGroup(l, mkTask(text, { claimedDay: target === "week" ? null : target })));
     setDraft(target, "");
   }
 
-  function addTaskAsSubtask(target) {
-    const text = (drafts[target] || "").trim(); if (!text) return;
+  function addTaskAsSubtask(target, providedText) {
+    const text = (providedText ?? drafts[target] ?? "").trim(); if (!text) return;
     const lastTask = target === "week"
       ? tasks.at(-1)
       : tasks.filter((t) => t.claimedDay === target).at(-1) ?? tasks.at(-1);
-    if (!lastTask) { addTask(target); return; }
+    if (!lastTask) { addTask(target, text); return; }
     update(lastTask.id, (t) => ({ ...t, subtasks: [...t.subtasks, mkSub(text)] }));
     setDraft(target, "");
     setTimeout(() => document.getElementById("add-" + target)?.focus(), 0);
@@ -614,13 +614,13 @@ export default function App({ user, onSignOut }) {
           value={drafts[target] || ""}
           onChange={(e) => setDraft(target, e.target.value)}
           onKeyDown={(e) => {
-            const raw = drafts[target] || "";
+            const raw = e.target.value; // read DOM value directly — closure drafts can be stale
             if (e.key === "Enter") {
               if (inSubMode) {
-                if (raw.trim()) addTaskAsSubtask(target);
+                if (raw.trim()) addTaskAsSubtask(target, raw);
                 else exitSubMode(target); // empty Enter → back to parent mode
               } else {
-                addTask(target);
+                addTask(target, raw);
               }
             }
             if (e.key === "Tab") { e.preventDefault(); enterSubMode(target); }
