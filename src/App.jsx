@@ -450,10 +450,13 @@ export default function App({ user, onSignOut }) {
                       + sub
                     </button>
                   )}
+                  {hovered && (
+                    <button onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete"
+                      style={{ ...delBtn, marginLeft: 4, verticalAlign: "baseline" }}>×</button>
+                  )}
                 </span>
               )}
               {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500 }}>{task.claimedDay}</span>}
-              {!isEditing && hovered && <button onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete" style={delBtn}>×</button>}
             </div>
             {meta && <div style={{ fontSize: 11, marginTop: 2 }}>{meta}</div>}
 
@@ -741,6 +744,7 @@ export default function App({ user, onSignOut }) {
             style={{ ...ghost, background: hideDone ? C.done : "transparent", color: hideDone ? C.doneInk : C.sub, borderColor: hideDone ? C.done : C.line2 }}>
             {hideDone ? "Show done" : "Hide done"}
           </button>
+          <button onClick={() => { if (window.confirm("Clear all tasks for this week?")) setList(key, () => []); }} style={{ ...ghost, fontSize: 11.5, color: "#c0392b", borderColor: "#e8b4b0" }}>Clear week</button>
           <button onClick={onSignOut} title={`Signed in as ${user.email}`} style={{ ...ghost, fontSize: 11.5 }}>Sign out</button>
         </div>
       </div>
