@@ -159,39 +159,78 @@ export default function App({ user, onSignOut }) {
 
   function saveTaskEdit(id, andInsertAfter = false) {
     const text = editDraft.trim();
-    if (text) update(id, (t) => ({ ...t, text }));
+    const parent = tasks.find((t) => t.id === id);
+    const newTask = andInsertAfter ? mkTask("", { claimedDay: parent?.claimedDay ?? null }) : null;
+    setList(key, (l) => {
+      let result = text ? l.map((t) => t.id === id ? { ...t, text } : t) : l;
+      if (newTask) {
+        const idx = result.findIndex((t) => t.id === id);
+        result = [...result];
+        result.splice(idx + 1, 0, newTask);
+      }
+      return result;
+    });
+    setEditingId(newTask ? newTask.id : null);
+    setEditDraft("");
+    if (newTask) setTimeout(() => document.getElementById(`edit-${newTask.id}`)?.focus(), 0);
+  }
+
+  function deleteTaskAndFocusPrev(id) {
+    const idx = tasks.findIndex((t) => t.id === id);
+    const prev = idx > 0 ? tasks[idx - 1] : null;
+    setList(key, (l) => l.filter((t) => t.id !== id));
     setEditingId(null); setEditDraft("");
-    if (andInsertAfter) {
-      const parent = tasks.find((t) => t.id === id);
-      const newTask = mkTask("", { claimedDay: parent?.claimedDay ?? null });
-      setList(key, (l) => {
-        const idx = l.findIndex((t) => t.id === id);
-        const copy = [...l];
-        copy.splice(idx + 1, 0, newTask);
-        return copy;
-      });
-      setEditingId(newTask.id); setEditDraft("");
-      setTimeout(() => document.getElementById(`edit-${newTask.id}`)?.focus(), 0);
-    }
+    if (prev) setTimeout(() => startEdit(prev), 0);
+  }
+
+  function demoteTaskToSub(id) {
+    const text = editDraft.trim();
+    const idx = tasks.findIndex((t) => t.id === id);
+    const prev = idx > 0 ? tasks[idx - 1] : null;
+    if (!prev) return; // nothing above — can't demote
+    const newSub = mkSub(text || "");
+    setList(key, (l) => {
+      const without = l.filter((t) => t.id !== id);
+      return without.map((t) => t.id === prev.id ? { ...t, subtasks: [...t.subtasks, newSub] } : t);
+    });
+    const newKey = `${prev.id}:${newSub.id}`;
+    setEditingId(null);
+    setEditingSubKey(newKey); setEditDraft(newSub.text);
+    setTimeout(() => document.getElementById(`edit-sub-${newKey}`)?.focus(), 0);
   }
 
   function saveSubEdit(andInsertAfter = false) {
     if (!editingSubKey) return;
     const [pid, sid] = editingSubKey.split(":");
     const text = editDraft.trim();
-    if (text) update(pid, (t) => ({ ...t, subtasks: t.subtasks.map((s) => s.id === sid ? { ...s, text } : s) }));
-    setEditingSubKey(null); setEditDraft("");
-    if (andInsertAfter) {
-      const newSub = mkSub("");
-      update(pid, (t) => {
-        const idx = t.subtasks.findIndex((s) => s.id === sid);
-        const copy = [...t.subtasks];
-        copy.splice(idx + 1, 0, newSub);
-        return { ...t, subtasks: copy };
-      });
+    const newSub = andInsertAfter ? mkSub("") : null;
+    update(pid, (t) => {
+      let subs = text ? t.subtasks.map((s) => s.id === sid ? { ...s, text } : s) : t.subtasks;
+      if (newSub) {
+        const idx = subs.findIndex((s) => s.id === sid);
+        subs = [...subs];
+        subs.splice(idx + 1, 0, newSub);
+      }
+      return { ...t, subtasks: subs };
+    });
+    if (newSub) {
       const newKey = `${pid}:${newSub.id}`;
       setEditingSubKey(newKey); setEditDraft("");
       setTimeout(() => document.getElementById(`edit-sub-${newKey}`)?.focus(), 0);
+    } else {
+      setEditingSubKey(null); setEditDraft("");
+    }
+  }
+
+  function deleteSubAndFocusPrev(pid, sid) {
+    const parent = tasks.find((t) => t.id === pid);
+    const idx = parent?.subtasks.findIndex((s) => s.id === sid) ?? -1;
+    const prev = idx > 0 ? parent.subtasks[idx - 1] : null;
+    update(pid, (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) }));
+    setEditingSubKey(null); setEditDraft("");
+    if (prev) {
+      const prevKey = `${pid}:${prev.id}`;
+      setTimeout(() => { setEditingSubKey(prevKey); setEditDraft(prev.text); setTimeout(() => { const el = document.getElementById(`edit-sub-${prevKey}`); el?.focus(); }, 0); }, 0);
     }
   }
 
@@ -465,6 +504,8 @@ export default function App({ user, onSignOut }) {
                   onKeyDown={(e) => {
                     if (e.key === "Enter")  { e.preventDefault(); saveTaskEdit(task.id, true); }
                     if (e.key === "Escape") { setEditingId(null); setEditDraft(""); }
+                    if (e.key === "Backspace" && e.target.value === "") { e.preventDefault(); deleteTaskAndFocusPrev(task.id); }
+                    if (e.key === "Tab") { e.preventDefault(); demoteTaskToSub(task.id); }
                   }}
                   onBlur={() => saveTaskEdit(task.id)}
                   style={editInputStyle}
@@ -535,6 +576,7 @@ export default function App({ user, onSignOut }) {
                           onKeyDown={(e) => {
                             if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(true); }
                             if (e.key === "Escape") { setEditingSubKey(null); setEditDraft(""); }
+                            if (e.key === "Backspace" && e.target.value === "") { e.preventDefault(); deleteSubAndFocusPrev(task.id, s.id); }
                           }}
                           onBlur={() => saveSubEdit()}
                           style={subEditStyle}
@@ -603,10 +645,11 @@ export default function App({ user, onSignOut }) {
               value={editDraft}
               onChange={(e) => setEditDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(); }
+                if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(true); }
                 if (e.key === "Escape") { setEditingSubKey(null); setEditDraft(""); }
+                if (e.key === "Backspace" && e.target.value === "") { e.preventDefault(); deleteSubAndFocusPrev(task.id, sub.id); }
               }}
-              onBlur={saveSubEdit}
+              onBlur={() => saveSubEdit()}
               style={{ flex: 1, minWidth: 0, fontSize: 13, color: sub.done ? C.sub : "#565860", border: "none", outline: "none", background: "transparent", fontFamily: "inherit", padding: 0, textDecoration: sub.done ? "line-through" : "none" }}
             />
           ) : (
