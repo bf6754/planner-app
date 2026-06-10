@@ -744,7 +744,11 @@ export default function App({ user, onSignOut }) {
             style={{ ...ghost, background: hideDone ? C.done : "transparent", color: hideDone ? C.doneInk : C.sub, borderColor: hideDone ? C.done : C.line2 }}>
             {hideDone ? "Show done" : "Hide done"}
           </button>
-          <button onClick={() => { if (window.confirm("Clear all tasks for this week?")) setList(key, () => []); }} style={{ ...ghost, fontSize: 11.5, color: "#c0392b", borderColor: "#e8b4b0" }}>Clear week</button>
+          <button onClick={async () => {
+            if (!window.confirm("Delete ALL tasks for ALL weeks? This cannot be undone.")) return;
+            await supabase.from("weeks").delete().eq("user_id", user.id).neq("week_key", "__meta__");
+            setWeeks({ [key]: [] }); prevWeeksRef.current = { [key]: [] };
+          }} style={{ ...ghost, fontSize: 11.5, color: "#c0392b", borderColor: "#e8b4b0" }}>Clear all</button>
           <button onClick={onSignOut} title={`Signed in as ${user.email}`} style={{ ...ghost, fontSize: 11.5 }}>Sign out</button>
         </div>
       </div>
