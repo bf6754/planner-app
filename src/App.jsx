@@ -169,9 +169,16 @@ export default function App({ user, onSignOut }) {
     setEditingSubKey(null);
   }
 
-  function startEdit(id) { setEditingId(id); }
+  function startEdit(id) {
+    setEditingId(id);
+    setTimeout(() => { const el = document.getElementById(`edit-${id}`); if (el) { el.focus(); el.select(); } }, 0);
+  }
 
-  function startSubEdit(view, pid, subId) { setEditingSubKey(`${view}:${pid}:${subId}`); }
+  function startSubEdit(view, pid, subId) {
+    const k = `${view}:${pid}:${subId}`;
+    setEditingSubKey(k);
+    setTimeout(() => { const el = document.getElementById(`edit-sub-${k}`); if (el) { el.focus(); el.select(); } }, 0);
+  }
 
   function addTask(target, providedText) {
     const text = (providedText ?? drafts[target] ?? "").trim(); if (!text) return;
@@ -426,10 +433,8 @@ export default function App({ user, onSignOut }) {
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               {isEditing ? (
                 <input
-                  key={task.id}
-                  autoFocus
+                  id={`edit-${task.id}`}
                   defaultValue={task.text}
-                  onFocus={(e) => e.target.select()}
                   onKeyDown={(e) => {
                     if (e.key === "Enter")  { e.preventDefault(); saveTaskEdit(task.id, e.target.value); }
                     if (e.key === "Escape") { setEditingId(null); }
@@ -439,7 +444,6 @@ export default function App({ user, onSignOut }) {
                 />
               ) : (
                 <span
-                  onMouseDown={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => { e.stopPropagation(); startEdit(task.id); }}
                   style={{ flex: 1, minWidth: 80, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
                   {task.text}
@@ -501,10 +505,8 @@ export default function App({ user, onSignOut }) {
                       <Circle done={s.done} size={view === "day" ? 14 : 15} onClick={() => toggleSub(task.id, s.id)} />
                       {subEditing ? (
                         <input
-                          key={s.id}
-                          autoFocus
+                          id={`edit-sub-week:${task.id}:${s.id}`}
                           defaultValue={s.text}
-                          onFocus={(e) => e.target.select()}
                           onKeyDown={(e) => {
                             if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(task.id, s.id, e.target.value); }
                             if (e.key === "Escape") { setEditingSubKey(null); }
@@ -514,7 +516,6 @@ export default function App({ user, onSignOut }) {
                         />
                       ) : (
                         <span
-                          onMouseDown={(e) => e.stopPropagation()}
                           onDoubleClick={(e) => { e.stopPropagation(); startSubEdit("week", task.id, s.id); }}
                           style={{ flex: 1, fontSize: fs, color: s.done ? C.sub : "#52545d", textDecoration: s.done ? "line-through" : "none", cursor: "text" }}>
                           {s.text}
@@ -573,10 +574,8 @@ export default function App({ user, onSignOut }) {
           <Circle done={sub.done} size={16} onClick={() => toggleSub(task.id, sub.id)} />
           {subEditing ? (
             <input
-              key={sub.id}
-              autoFocus
+              id={`edit-sub-day:${task.id}:${sub.id}`}
               defaultValue={sub.text}
-              onFocus={(e) => e.target.select()}
               onKeyDown={(e) => {
                 if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(task.id, sub.id, e.target.value); }
                 if (e.key === "Escape") { setEditingSubKey(null); }
@@ -586,7 +585,6 @@ export default function App({ user, onSignOut }) {
             />
           ) : (
             <span
-              onMouseDown={(e) => e.stopPropagation()}
               onDoubleClick={(e) => { e.stopPropagation(); startSubEdit("day", task.id, sub.id); }}
               style={{ flex: 1, fontSize: 13, color: sub.done ? C.sub : "#565860", textDecoration: sub.done ? "line-through" : "none", cursor: "text" }}>
               {sub.text}
