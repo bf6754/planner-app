@@ -439,6 +439,7 @@ export default function App({ user, onSignOut }) {
                 />
               ) : (
                 <span
+                  draggable={false}
                   onDoubleClick={(e) => { e.stopPropagation(); startEdit(task.id); }}
                   style={{ flex: 1, minWidth: 80, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
                   {task.text}
@@ -513,6 +514,7 @@ export default function App({ user, onSignOut }) {
                         />
                       ) : (
                         <span
+                          draggable={false}
                           onDoubleClick={(e) => { e.stopPropagation(); startSubEdit("week", task.id, s.id); }}
                           style={{ flex: 1, fontSize: fs, color: s.done ? C.sub : "#52545d", textDecoration: s.done ? "line-through" : "none", cursor: "text" }}>
                           {s.text}
@@ -584,6 +586,7 @@ export default function App({ user, onSignOut }) {
             />
           ) : (
             <span
+              draggable={false}
               onDoubleClick={(e) => { e.stopPropagation(); startSubEdit("day", task.id, sub.id); }}
               style={{ flex: 1, fontSize: 13, color: sub.done ? C.sub : "#565860", textDecoration: sub.done ? "line-through" : "none", cursor: "text" }}>
               {sub.text}
