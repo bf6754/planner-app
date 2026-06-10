@@ -39,14 +39,14 @@ export default function App({ user, onSignOut }) {
   const [addSubFor,    setAddSubFor]    = useState(null);  // task id with inline add-subtask input
   const [subMode,      setSubMode]      = useState(new Set()); // add-slot targets in subtask mode
   const [editingId,    setEditingId]    = useState(null);  // task id being edited
-  const [editingSubKey,setEditingSubKey]= useState(null);  // "pid:sid" subtask being edited
-  const [editDraft,    setEditDraft]    = useState("");
+  const [editingSubKey,setEditingSubKey]= useState(null);  // "view:pid:sid" subtask being edited
   const [wkOpen,       setWkOpen]       = useState(false);
   const [ov,           setOv]           = useState({});
   const [vw,           setVw]           = useState(() => window.innerWidth);
 
   const drag         = useRef(null);
   const dropMode     = useRef(null);
+  const skipBlur      = useRef(false);  // prevent blur from killing Enter-created edit state
   const prevWeeksRef = useRef(null); // tracks last-saved weeks to diff on change
 
   // ── load weeks + meta from Supabase on mount ──────────────────────────────
@@ -157,92 +157,77 @@ export default function App({ user, onSignOut }) {
     update(pid, (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) }));
   }
 
-  function saveTaskEdit(id, andInsertAfter = false) {
-    const text = editDraft.trim();
+  function saveTaskEdit(id, text, andInsertAfter = false) {
+    text = (text || "").trim();
     const parent = tasks.find((t) => t.id === id);
     const newTask = andInsertAfter ? mkTask("", { claimedDay: parent?.claimedDay ?? null }) : null;
     setList(key, (l) => {
       let result = text ? l.map((t) => t.id === id ? { ...t, text } : t) : l;
       if (newTask) {
         const idx = result.findIndex((t) => t.id === id);
-        result = [...result];
-        result.splice(idx + 1, 0, newTask);
+        result = [...result]; result.splice(idx + 1, 0, newTask);
       }
       return result;
     });
-    setEditingId(newTask ? newTask.id : null);
-    setEditDraft("");
-    if (newTask) setTimeout(() => document.getElementById(`edit-${newTask.id}`)?.focus(), 0);
+    if (newTask) { skipBlur.current = true; setEditingId(newTask.id); }
+    else setEditingId(null);
   }
 
   function deleteTaskAndFocusPrev(id) {
     const idx = tasks.findIndex((t) => t.id === id);
     const prev = idx > 0 ? tasks[idx - 1] : null;
     setList(key, (l) => l.filter((t) => t.id !== id));
-    setEditingId(null); setEditDraft("");
-    if (prev) setTimeout(() => startEdit(prev), 0);
+    if (prev) { skipBlur.current = true; setEditingId(prev.id); }
+    else setEditingId(null);
   }
 
-  function demoteTaskToSub(id) {
-    const text = editDraft.trim();
+  function demoteTaskToSub(id, text) {
+    text = (text || "").trim();
     const idx = tasks.findIndex((t) => t.id === id);
     const prev = idx > 0 ? tasks[idx - 1] : null;
-    if (!prev) return; // nothing above — can't demote
-    const newSub = mkSub(text || "");
+    if (!prev) return;
+    const newSub = mkSub(text);
     setList(key, (l) => {
       const without = l.filter((t) => t.id !== id);
       return without.map((t) => t.id === prev.id ? { ...t, subtasks: [...t.subtasks, newSub] } : t);
     });
-    const newKey = `${prev.id}:${newSub.id}`;
+    skipBlur.current = true;
     setEditingId(null);
-    setEditingSubKey(newKey); setEditDraft(newSub.text);
-    setTimeout(() => document.getElementById(`edit-sub-${newKey}`)?.focus(), 0);
+    setEditingSubKey(`week:${prev.id}:${newSub.id}`);
   }
 
-  function saveSubEdit(andInsertAfter = false) {
-    if (!editingSubKey) return;
-    const [pid, sid] = editingSubKey.split(":");
-    const text = editDraft.trim();
+  // editingSubKey format: "view:pid:sid" where view is "week" or "day"
+  function saveSubEdit(pid, sid, text, andInsertAfter = false, view = "week") {
+    text = (text || "").trim();
     const newSub = andInsertAfter ? mkSub("") : null;
     update(pid, (t) => {
       let subs = text ? t.subtasks.map((s) => s.id === sid ? { ...s, text } : s) : t.subtasks;
       if (newSub) {
         const idx = subs.findIndex((s) => s.id === sid);
-        subs = [...subs];
-        subs.splice(idx + 1, 0, newSub);
+        subs = [...subs]; subs.splice(idx + 1, 0, newSub);
       }
       return { ...t, subtasks: subs };
     });
-    if (newSub) {
-      const newKey = `${pid}:${newSub.id}`;
-      setEditingSubKey(newKey); setEditDraft("");
-      setTimeout(() => document.getElementById(`edit-sub-${newKey}`)?.focus(), 0);
-    } else {
-      setEditingSubKey(null); setEditDraft("");
-    }
+    if (newSub) { skipBlur.current = true; setEditingSubKey(`${view}:${pid}:${newSub.id}`); }
+    else setEditingSubKey(null);
   }
 
   function deleteSubAndFocusPrev(pid, sid) {
     const parent = tasks.find((t) => t.id === pid);
     const idx = parent?.subtasks.findIndex((s) => s.id === sid) ?? -1;
     const prev = idx > 0 ? parent.subtasks[idx - 1] : null;
+    const view = editingSubKey?.split(":")[0] ?? "week";
     update(pid, (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) }));
-    setEditingSubKey(null); setEditDraft("");
-    if (prev) {
-      const prevKey = `${pid}:${prev.id}`;
-      setTimeout(() => { setEditingSubKey(prevKey); setEditDraft(prev.text); setTimeout(() => { const el = document.getElementById(`edit-sub-${prevKey}`); el?.focus(); }, 0); }, 0);
-    }
+    if (prev) { skipBlur.current = true; setEditingSubKey(`${view}:${pid}:${prev.id}`); }
+    else setEditingSubKey(null);
   }
 
-  function startEdit(task) {
-    setEditingId(task.id); setEditDraft(task.text);
-    setTimeout(() => { const el = document.getElementById(`edit-${task.id}`); el?.focus(); el?.select(); }, 0);
+  function startEdit(id) {
+    setEditingId(id);
   }
 
-  function startSubEdit(pid, sub) {
-    const k = `${pid}:${sub.id}`;
-    setEditingSubKey(k); setEditDraft(sub.text);
-    setTimeout(() => { const el = document.getElementById(`edit-sub-${k}`); el?.focus(); el?.select(); }, 0);
+  function startSubEdit(view, pid, subId) {
+    setEditingSubKey(`${view}:${pid}:${subId}`);
   }
 
   function addTask(target, providedText) {
@@ -498,22 +483,23 @@ export default function App({ user, onSignOut }) {
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               {isEditing ? (
                 <input
-                  id={`edit-${task.id}`}
-                  value={editDraft}
-                  onChange={(e) => setEditDraft(e.target.value)}
+                  key={task.id}
+                  autoFocus
+                  defaultValue={task.text}
+                  onFocus={(e) => e.target.select()}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter")  { e.preventDefault(); saveTaskEdit(task.id, true); }
-                    if (e.key === "Escape") { setEditingId(null); setEditDraft(""); }
+                    if (e.key === "Enter")  { e.preventDefault(); saveTaskEdit(task.id, e.target.value, true); }
+                    if (e.key === "Escape") { setEditingId(null); }
                     if (e.key === "Backspace" && e.target.value === "") { e.preventDefault(); deleteTaskAndFocusPrev(task.id); }
-                    if (e.key === "Tab") { e.preventDefault(); demoteTaskToSub(task.id); }
+                    if (e.key === "Tab") { e.preventDefault(); demoteTaskToSub(task.id, e.target.value); }
                   }}
-                  onBlur={() => saveTaskEdit(task.id)}
-                  style={editInputStyle}
+                  onBlur={(e) => { if (skipBlur.current) { skipBlur.current = false; return; } saveTaskEdit(task.id, e.target.value); }}
+                  style={{ ...editInputStyle, borderBottom: `1.5px solid ${C.accent}` }}
                 />
               ) : (
                 <span
-                  onDoubleClick={(e) => { e.stopPropagation(); startEdit(task); }}
-                  style={{ flex: 1, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
+                  onDoubleClick={(e) => { e.stopPropagation(); startEdit(task.id); }}
+                  style={{ flex: 1, minWidth: 80, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
                   {task.text}
                   {hovered && !addSubFor && (
                     <button
@@ -536,7 +522,7 @@ export default function App({ user, onSignOut }) {
                 {subs.map((s) => {
                   const subKey     = `${task.id}:${s.id}`;
                   const subHovered = hoveredId === s.id;
-                  const subEditing = editingSubKey === subKey;
+                  const subEditing = editingSubKey === `week:${subKey}`;
                   const subEditStyle = {
                     flex: 1, minWidth: 0, fontSize: fs,
                     color: s.done ? C.sub : "#52545d",
@@ -570,20 +556,21 @@ export default function App({ user, onSignOut }) {
                       <Circle done={s.done} size={view === "day" ? 14 : 15} onClick={() => toggleSub(task.id, s.id)} />
                       {subEditing ? (
                         <input
-                          id={`edit-sub-${subKey}`}
-                          value={editDraft}
-                          onChange={(e) => setEditDraft(e.target.value)}
+                          key={s.id}
+                          autoFocus
+                          defaultValue={s.text}
+                          onFocus={(e) => e.target.select()}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(true); }
-                            if (e.key === "Escape") { setEditingSubKey(null); setEditDraft(""); }
+                            if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(task.id, s.id, e.target.value, true, "week"); }
+                            if (e.key === "Escape") { setEditingSubKey(null); }
                             if (e.key === "Backspace" && e.target.value === "") { e.preventDefault(); deleteSubAndFocusPrev(task.id, s.id); }
                           }}
-                          onBlur={() => saveSubEdit()}
-                          style={subEditStyle}
+                          onBlur={(e) => { if (skipBlur.current) { skipBlur.current = false; return; } saveSubEdit(task.id, s.id, e.target.value, false, "week"); }}
+                          style={{ ...subEditStyle, borderBottom: `1.5px solid ${C.accent}` }}
                         />
                       ) : (
                         <span
-                          onDoubleClick={(e) => { e.stopPropagation(); startSubEdit(task.id, s); }}
+                          onDoubleClick={(e) => { e.stopPropagation(); startSubEdit("week", task.id, s.id); }}
                           style={{ flex: 1, fontSize: fs, color: s.done ? C.sub : "#52545d", textDecoration: s.done ? "line-through" : "none", cursor: "text" }}>
                           {s.text}
                         </span>
@@ -628,7 +615,7 @@ export default function App({ user, onSignOut }) {
   function subOnDay(task, sub) {
     const subHovered = hoveredId === sub.id;
     const subKey     = `${task.id}:${sub.id}`;
-    const subEditing = editingSubKey === subKey;
+    const subEditing = editingSubKey === `day:${subKey}`;
     return (
       <div key={sub.id}
         draggable={!subEditing}
@@ -641,20 +628,21 @@ export default function App({ user, onSignOut }) {
           <Circle done={sub.done} size={16} onClick={() => toggleSub(task.id, sub.id)} />
           {subEditing ? (
             <input
-              id={`edit-sub-${subKey}`}
-              value={editDraft}
-              onChange={(e) => setEditDraft(e.target.value)}
+              key={sub.id}
+              autoFocus
+              defaultValue={sub.text}
+              onFocus={(e) => e.target.select()}
               onKeyDown={(e) => {
-                if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(true); }
-                if (e.key === "Escape") { setEditingSubKey(null); setEditDraft(""); }
+                if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(task.id, sub.id, e.target.value, true, "day"); }
+                if (e.key === "Escape") { setEditingSubKey(null); }
                 if (e.key === "Backspace" && e.target.value === "") { e.preventDefault(); deleteSubAndFocusPrev(task.id, sub.id); }
               }}
-              onBlur={() => saveSubEdit()}
-              style={{ flex: 1, minWidth: 0, fontSize: 13, color: sub.done ? C.sub : "#565860", border: "none", outline: "none", background: "transparent", fontFamily: "inherit", padding: 0, textDecoration: sub.done ? "line-through" : "none" }}
+              onBlur={(e) => { if (skipBlur.current) { skipBlur.current = false; return; } saveSubEdit(task.id, sub.id, e.target.value, false, "day"); }}
+              style={{ flex: 1, minWidth: 0, fontSize: 13, color: sub.done ? C.sub : "#565860", border: "none", outline: "none", background: "transparent", fontFamily: "inherit", padding: 0, textDecoration: sub.done ? "line-through" : "none", borderBottom: `1.5px solid ${C.accent}` }}
             />
           ) : (
             <span
-              onDoubleClick={(e) => { e.stopPropagation(); startSubEdit(task.id, sub); }}
+              onDoubleClick={(e) => { e.stopPropagation(); startSubEdit("day", task.id, sub.id); }}
               style={{ flex: 1, fontSize: 13, color: sub.done ? C.sub : "#565860", textDecoration: sub.done ? "line-through" : "none", cursor: "text" }}>
               {sub.text}
             </span>
