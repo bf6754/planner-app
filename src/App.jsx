@@ -157,18 +157,42 @@ export default function App({ user, onSignOut }) {
     update(pid, (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) }));
   }
 
-  function saveTaskEdit(id) {
+  function saveTaskEdit(id, andInsertAfter = false) {
     const text = editDraft.trim();
     if (text) update(id, (t) => ({ ...t, text }));
     setEditingId(null); setEditDraft("");
+    if (andInsertAfter) {
+      const parent = tasks.find((t) => t.id === id);
+      const newTask = mkTask("", { claimedDay: parent?.claimedDay ?? null });
+      setList(key, (l) => {
+        const idx = l.findIndex((t) => t.id === id);
+        const copy = [...l];
+        copy.splice(idx + 1, 0, newTask);
+        return copy;
+      });
+      setEditingId(newTask.id); setEditDraft("");
+      setTimeout(() => document.getElementById(`edit-${newTask.id}`)?.focus(), 0);
+    }
   }
 
-  function saveSubEdit() {
+  function saveSubEdit(andInsertAfter = false) {
     if (!editingSubKey) return;
     const [pid, sid] = editingSubKey.split(":");
     const text = editDraft.trim();
     if (text) update(pid, (t) => ({ ...t, subtasks: t.subtasks.map((s) => s.id === sid ? { ...s, text } : s) }));
     setEditingSubKey(null); setEditDraft("");
+    if (andInsertAfter) {
+      const newSub = mkSub("");
+      update(pid, (t) => {
+        const idx = t.subtasks.findIndex((s) => s.id === sid);
+        const copy = [...t.subtasks];
+        copy.splice(idx + 1, 0, newSub);
+        return { ...t, subtasks: copy };
+      });
+      const newKey = `${pid}:${newSub.id}`;
+      setEditingSubKey(newKey); setEditDraft("");
+      setTimeout(() => document.getElementById(`edit-sub-${newKey}`)?.focus(), 0);
+    }
   }
 
   function startEdit(task) {
@@ -439,7 +463,7 @@ export default function App({ user, onSignOut }) {
                   value={editDraft}
                   onChange={(e) => setEditDraft(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter")  { e.preventDefault(); saveTaskEdit(task.id); }
+                    if (e.key === "Enter")  { e.preventDefault(); saveTaskEdit(task.id, true); }
                     if (e.key === "Escape") { setEditingId(null); setEditDraft(""); }
                   }}
                   onBlur={() => saveTaskEdit(task.id)}
@@ -509,10 +533,10 @@ export default function App({ user, onSignOut }) {
                           value={editDraft}
                           onChange={(e) => setEditDraft(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(); }
+                            if (e.key === "Enter")  { e.preventDefault(); saveSubEdit(true); }
                             if (e.key === "Escape") { setEditingSubKey(null); setEditDraft(""); }
                           }}
-                          onBlur={saveSubEdit}
+                          onBlur={() => saveSubEdit()}
                           style={subEditStyle}
                         />
                       ) : (
