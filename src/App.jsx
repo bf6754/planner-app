@@ -55,8 +55,37 @@ export default function App({ user, onSignOut }) {
     Promise.all([fetchAllWeeks(), fetchMeta()]).then(([data, remoteMeta]) => {
       const nowKey = currentWeekKey();
       if (!data[nowKey]) data[nowKey] = [];
-      setWeeks(data);
-      prevWeeksRef.current = data;
+
+      // ── one-time dedup: fix any colliding IDs left over from the counter-based uid bug
+      const seen = new Set();
+      const fixedData = {};
+      let anyFixed = false;
+      for (const [wk, tasks] of Object.entries(data)) {
+        const fixedTasks = (tasks || []).map((t) => {
+          let task = { ...t };
+          if (!task.id || seen.has(task.id)) { task = { ...task, id: crypto.randomUUID() }; anyFixed = true; }
+          seen.add(task.id);
+          const subSeen = new Set();
+          task.subtasks = (task.subtasks || []).map((s) => {
+            let sub = { ...s };
+            if (!sub.id || seen.has(sub.id) || subSeen.has(sub.id)) { sub = { ...sub, id: crypto.randomUUID() }; anyFixed = true; }
+            seen.add(sub.id); subSeen.add(sub.id);
+            return sub;
+          });
+          return task;
+        });
+        fixedData[wk] = fixedTasks;
+      }
+      if (anyFixed) {
+        console.log("[fix-ids] Duplicate IDs found — saving cleaned data");
+        Object.entries(fixedData).forEach(([wk, tasks]) => {
+          if (JSON.stringify(tasks) !== JSON.stringify(data[wk])) upsertWeek(user.id, wk, tasks);
+        });
+      }
+      const cleanData = anyFixed ? fixedData : data;
+
+      setWeeks(cleanData);
+      prevWeeksRef.current = cleanData;
 
       // carry-over check with authoritative remote meta
       const { shouldCarry, sourceKey } = checkCarryOver(data, remoteMeta);
