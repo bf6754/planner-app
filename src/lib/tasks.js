@@ -1,7 +1,6 @@
 import { dayIndex } from "./dates.js";
 
-let _counter = 100;
-export const uid = () => "t" + (_counter++);
+export const uid = () => crypto.randomUUID();
 
 export function mkTask(text, overrides = {}) {
   return {
