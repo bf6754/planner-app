@@ -160,6 +160,7 @@ export default function App({ user, onSignOut }) {
 
   function deleteTask(id) {
     setList(key, (l) => l.filter((t) => t.id !== id));
+    if (addSubFor === id) setAddSubFor(null);
   }
 
   function deleteSub(pid, sid) {
@@ -556,7 +557,7 @@ export default function App({ user, onSignOut }) {
                     if (e.key === "Enter")  addSubtask(task.id);
                     if (e.key === "Escape") { setAddSubFor(null); setDraft(`sub-${task.id}`, ""); }
                   }}
-                  onBlur={() => { if (!(drafts[`sub-${task.id}`] || "").trim()) setAddSubFor(null); }}
+                  onBlur={() => { if ((drafts[`sub-${task.id}`] || "").trim()) addSubtask(task.id); else setAddSubFor(null); }}
                   placeholder="New subtask"
                   style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: fs, color: C.ink, fontFamily: "inherit" }}
                 />
