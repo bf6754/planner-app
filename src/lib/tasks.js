@@ -10,6 +10,7 @@ export function mkTask(text, overrides = {}) {
     carried: false,
     claimedDay: null,
     subtasks: [],
+    tags: [],
     createdAt: Date.now(),
     priority: null,
     type: null,

@@ -3,10 +3,14 @@ import C from "./theme.js";
 import { DAYS, MONTHS, WEEKDAYS, WEEKEND, ymd, fmtDate, fmtRange, getMonday, addDays, dayIndex, currentWeekKey } from "./lib/dates.js";
 import { uid, mkTask, mkSub, floatDone, placeInGroup } from "./lib/tasks.js";
 import { loadMetaLocal, saveMetaLocal, fetchAllWeeks, upsertWeek, fetchMeta, upsertMeta, checkCarryOver, getLeftovers } from "./data/store.js";
+import { fetchTags, upsertTag, deleteTag } from "./data/storage.js";
 import { supabase } from "./data/supabase.js";
 import CarryOverModal from "./components/CarryOverModal.jsx";
 import Circle from "./components/Circle.jsx";
 import { Arrow, Plus, Chev } from "./components/Icons.jsx";
+import TagChip from "./components/TagChip.jsx";
+import TagPicker from "./components/TagPicker.jsx";
+import TagView from "./components/TagView.jsx";
 
 // ── shared button styles ──────────────────────────────────────────────────────
 const navBtn = {
@@ -43,6 +47,9 @@ export default function App({ user, onSignOut }) {
   const [wkOpen,       setWkOpen]       = useState(false);
   const [ov,           setOv]           = useState({});
   const [vw,           setVw]           = useState(() => window.innerWidth);
+  const [tags,         setTags]         = useState([]);
+  const [tagPickerFor, setTagPickerFor] = useState(null); // task id with picker open
+  const [showTagView,  setShowTagView]  = useState(false);
 
   const drag         = useRef(null);
   const dropMode     = useRef(null);
@@ -52,6 +59,7 @@ export default function App({ user, onSignOut }) {
 
   // ── load weeks + meta from Supabase on mount ──────────────────────────────
   useEffect(() => {
+    fetchTags(user.id).then(setTags).catch(() => {});
     Promise.all([fetchAllWeeks(), fetchMeta()]).then(([data, remoteMeta]) => {
       const nowKey = currentWeekKey();
       if (!data[nowKey]) data[nowKey] = [];
@@ -145,6 +153,17 @@ export default function App({ user, onSignOut }) {
     return () => supabase.removeChannel(channel);
   }, [dataLoading]);
 
+  // ── real-time sync for tags ────────────────────────────────────────────────
+  useEffect(() => {
+    if (dataLoading) return;
+    const ch = supabase.channel("tags-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tags" }, () => {
+        fetchTags(user.id).then(setTags).catch(() => {});
+      })
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [dataLoading]);
+
   useEffect(() => {
     const on = () => setVw(window.innerWidth);
     window.addEventListener("resize", on);
@@ -194,6 +213,43 @@ export default function App({ user, onSignOut }) {
 
   function deleteSub(pid, sid) {
     update(pid, (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) }));
+  }
+
+  function toggleTagOnTask(taskId, tagId) {
+    update(taskId, (t) => {
+      const cur = t.tags || [];
+      const next = cur.includes(tagId) ? cur.filter((id) => id !== tagId) : [...cur, tagId];
+      return { ...t, tags: next };
+    });
+  }
+
+  async function handleCreateTag(fields) {
+    const tag = await upsertTag(user.id, { id: crypto.randomUUID(), ...fields });
+    if (tag) setTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)));
+    return tag;
+  }
+
+  async function handleCreateTagAndAdd(taskId, fields) {
+    const tag = await handleCreateTag(fields);
+    if (tag) toggleTagOnTask(taskId, tag.id);
+  }
+
+  async function handleUpdateTag(tag) {
+    await upsertTag(user.id, tag);
+    setTags((prev) => prev.map((t) => t.id === tag.id ? tag : t));
+  }
+
+  async function handleDeleteTag(tagId) {
+    await deleteTag(tagId);
+    setTags((prev) => prev.filter((t) => t.id !== tagId));
+    // Remove tag from all tasks
+    setWeeks((w) => {
+      const next = {};
+      for (const [k, tasks] of Object.entries(w)) {
+        next[k] = (tasks || []).map((t) => ({ ...t, tags: (t.tags || []).filter((id) => id !== tagId) }));
+      }
+      return next;
+    });
   }
 
   function saveTaskEdit(id, text) {
@@ -496,6 +552,10 @@ export default function App({ user, onSignOut }) {
                     </button>
                   )}
                   {hovered && (
+                    <button onClick={(e) => { e.stopPropagation(); setTagPickerFor((p) => p === task.id ? null : task.id); }} title="Tag"
+                      style={{ ...delBtn, fontSize: 10.5, opacity: 0.4, marginLeft: 4, verticalAlign: "baseline" }}>#</button>
+                  )}
+                  {hovered && (
                     <button onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete"
                       style={{ ...delBtn, marginLeft: 4, verticalAlign: "baseline" }}>×</button>
                   )}
@@ -503,6 +563,27 @@ export default function App({ user, onSignOut }) {
               )}
               {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500 }}>{task.claimedDay}</span>}
             </div>
+            {/* tag chips */}
+            {(task.tags || []).length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                {(task.tags || []).map((tid) => {
+                  const tag = tags.find((t) => t.id === tid);
+                  return tag ? <TagChip key={tid} tag={tag} onRemove={() => toggleTagOnTask(task.id, tid)} small /> : null;
+                })}
+              </div>
+            )}
+            {/* tag picker */}
+            {tagPickerFor === task.id && (
+              <div style={{ position: "relative" }}>
+                <TagPicker
+                  allTags={tags}
+                  taskTags={task.tags || []}
+                  onToggle={(tagId) => toggleTagOnTask(task.id, tagId)}
+                  onCreateTag={(fields) => handleCreateTagAndAdd(task.id, fields)}
+                  onClose={() => setTagPickerFor(null)}
+                />
+              </div>
+            )}
             {meta && <div style={{ fontSize: 11, marginTop: 2 }}>{meta}</div>}
 
             {/* subtasks list */}
@@ -743,6 +824,18 @@ export default function App({ user, onSignOut }) {
   const carryLeftovers = carry ? getLeftovers(weeks, carry) : [];
 
   // ── render ─────────────────────────────────────────────────────────────────
+  if (showTagView) {
+    return (
+      <TagView
+        tags={tags}
+        weeks={weeks}
+        onClose={() => setShowTagView(false)}
+        onUpdateTag={handleUpdateTag}
+        onDeleteTag={handleDeleteTag}
+      />
+    );
+  }
+
   if (dataLoading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: C.bg, fontFamily: "'Inter','Helvetica Neue',Helvetica,Arial,sans-serif" }}>
@@ -779,6 +872,7 @@ export default function App({ user, onSignOut }) {
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => setShowTagView(true)} style={ghost}>Tags</button>
           <button onClick={openCarryOver} style={ghost}>Carry-over</button>
           <button
             onClick={() => setHideDone((h) => !h)}

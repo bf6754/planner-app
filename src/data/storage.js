@@ -42,6 +42,27 @@ export async function upsertMeta(userId, meta) {
   );
 }
 
+// ── Tags ──────────────────────────────────────────────────────────────────────
+
+export async function fetchTags(userId) {
+  const { data, error } = await supabase.from("tags").select("*").eq("user_id", userId).order("name");
+  if (error) throw error;
+  return data || [];
+}
+
+export async function upsertTag(userId, tag) {
+  const { data, error } = await supabase.from("tags")
+    .upsert({ ...tag, user_id: userId }, { onConflict: "id" })
+    .select().single();
+  if (error) { console.error("Tag save error:", error.message); return null; }
+  return data;
+}
+
+export async function deleteTag(tagId) {
+  const { error } = await supabase.from("tags").delete().eq("id", tagId);
+  if (error) console.error("Tag delete error:", error.message);
+}
+
 // localStorage kept as fast initial fallback while Supabase loads
 const LS_META = "wt_meta";
 export function loadMetaLocal() {
