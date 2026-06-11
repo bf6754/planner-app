@@ -375,7 +375,7 @@ export default function App({ user, onSignOut }) {
       (s) => s.done
     );
     const txt        = task.done ? C.sub : C.ink;
-    const hovered    = hoveredId === task.id;
+    const hovered    = hoveredId === `${view}:${task.id}`;
     const isSubDrop  = subDropId === task.id;
     const isEditing  = editingId === task.id;
     const fs         = view === "day" ? 13 : 14;
@@ -397,8 +397,8 @@ export default function App({ user, onSignOut }) {
     return (
       <div key={task.id}
         draggable={!isEditing}
-        onMouseEnter={() => setHoveredId(task.id)}
-        onMouseLeave={() => setHoveredId((h) => h === task.id ? null : h)}
+        onMouseEnter={() => setHoveredId(`${view}:${task.id}`)}
+        onMouseLeave={() => setHoveredId((h) => h === `${view}:${task.id}` ? null : h)}
         onDragStart={(e) => { if (isEditing) { e.preventDefault(); return; } drag.current = { t: "task", id: task.id }; e.dataTransfer.effectAllowed = "move"; }}
         onDragOver={(e) => {
           e.preventDefault();
@@ -480,7 +480,7 @@ export default function App({ user, onSignOut }) {
               <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 4, paddingLeft: 8 }}>
                 {subs.map((s) => {
                   const subKey     = `${task.id}:${s.id}`;
-                  const subHovered = hoveredId === s.id;
+                  const subHovered = hoveredId === `week:sub:${s.id}`;
                   const subEditing = editingSubKey === `week:${subKey}`;
                   const subEditStyle = {
                     flex: 1, minWidth: 0, fontSize: fs,
@@ -492,8 +492,8 @@ export default function App({ user, onSignOut }) {
                   return (
                     <div key={s.id}
                       draggable={!subEditing}
-                      onMouseEnter={() => setHoveredId(s.id)}
-                      onMouseLeave={() => setHoveredId((h) => h === s.id ? null : h)}
+                      onMouseEnter={() => setHoveredId(`week:sub:${s.id}`)}
+                      onMouseLeave={() => setHoveredId((h) => h === `week:sub:${s.id}` ? null : h)}
                       onDragStart={(e) => { if (subEditing) { e.preventDefault(); return; } e.stopPropagation(); drag.current = { t: "sub", pid: task.id, sid: s.id }; e.dataTransfer.effectAllowed = "move"; }}
                       onDragOver={(e) => {
                         e.preventDefault(); e.stopPropagation(); // don't bubble to parent task
@@ -569,14 +569,14 @@ export default function App({ user, onSignOut }) {
   }
 
   function subOnDay(task, sub) {
-    const subHovered = hoveredId === sub.id;
+    const subHovered = hoveredId === `day:sub:${sub.id}`;
     const subKey     = `${task.id}:${sub.id}`;
     const subEditing = editingSubKey === `day:${subKey}`;
     return (
       <div key={sub.id}
         draggable={!subEditing}
-        onMouseEnter={() => setHoveredId(sub.id)}
-        onMouseLeave={() => setHoveredId((h) => h === sub.id ? null : h)}
+        onMouseEnter={() => setHoveredId(`day:sub:${sub.id}`)}
+        onMouseLeave={() => setHoveredId((h) => h === `day:sub:${sub.id}` ? null : h)}
         onDragStart={(e) => { if (subEditing) { e.preventDefault(); return; } drag.current = { t: "sub", pid: task.id, sid: sub.id }; e.dataTransfer.effectAllowed = "move"; }}
         style={{ borderBottom: `1px solid ${C.line}`, padding: "7px 2px", opacity: sub.done ? 0.55 : 1, cursor: subEditing ? "default" : "grab" }}>
         <div style={{ fontSize: 10.5, fontStyle: "italic", color: C.sub, marginBottom: 3, marginLeft: 25 }}>{task.text}</div>
