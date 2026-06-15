@@ -1,0 +1,54 @@
+-- Run this in the Supabase SQL editor before deploying the updated app.
+-- The old "weeks" table is left untouched; the app will migrate its data automatically on first load.
+
+CREATE TABLE IF NOT EXISTS public.tasks (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  text        TEXT        NOT NULL DEFAULT '',
+  done        BOOLEAN     NOT NULL DEFAULT FALSE,
+  subtasks    JSONB       NOT NULL DEFAULT '[]',
+  priority    TEXT,
+  type        TEXT,
+  deadline    TEXT,
+  notes       TEXT        NOT NULL DEFAULT '',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "tasks_own" ON public.tasks
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS public.week_tasks (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id     UUID        NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
+  user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  week_key    TEXT        NOT NULL,
+  claimed_day TEXT,                         -- "Mon"/"Tue"/… or NULL (week inbox)
+  carried     BOOLEAN     NOT NULL DEFAULT FALSE,
+  position    INT         NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.week_tasks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "week_tasks_own" ON public.week_tasks
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS public.user_meta (
+  user_id          UUID        PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  last_opened_key  TEXT,
+  carry_done_key   TEXT,        -- week key for which carry-over has already been handled
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.user_meta ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user_meta_own" ON public.user_meta
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);

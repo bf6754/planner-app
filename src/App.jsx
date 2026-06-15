@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import C from "./theme.js";
 import { DAYS, MONTHS, WEEKDAYS, WEEKEND, ymd, fmtDate, fmtRange, getMonday, addDays, dayIndex, currentWeekKey } from "./lib/dates.js";
 import { uid, mkTask, mkSub, floatDone, placeInGroup } from "./lib/tasks.js";
-import { loadMetaLocal, saveMetaLocal, fetchAllWeeks, upsertWeek, fetchMeta, upsertMeta, checkCarryOver, getLeftovers } from "./data/store.js";
+import { loadMetaLocal, saveMetaLocal, fetchAllTasks, upsertTask, deleteTaskById, fetchAllAssignments, upsertAssignment, upsertAssignments, deleteAssignment, fetchMeta, upsertMeta, migrateFromWeeksTable, checkCarryOver, getLeftovers } from "./data/store.js";
 import { supabase } from "./data/supabase.js";
 import CarryOverModal from "./components/CarryOverModal.jsx";
 import Circle from "./components/Circle.jsx";
@@ -26,121 +26,109 @@ const delBtn = {
 };
 
 export default function App({ user, onSignOut }) {
-  const [weeks,        setWeeks]        = useState({});
+  const [taskReg,      setTaskReg]      = useState({});       // { id → task }
+  const [weekAssign,   setWeekAssign]   = useState({});       // { weekKey → [assignment] }
   const [dataLoading,  setDataLoading]  = useState(true);
-  const [meta,         setMeta]         = useState(loadMetaLocal); // local fallback until Supabase loads
+  const [meta,         setMeta]         = useState(loadMetaLocal);
   const [monday,       setMonday]       = useState(() => { const k = currentWeekKey(); const [y,m,d] = k.split("-").map(Number); return new Date(y, m-1, d); });
   const [hideDone,     setHideDone]     = useState(false);
   const [drafts,       setDrafts]       = useState({});
   const [carry,        setCarry]        = useState(null);
-  const [overId,       setOverId]       = useState(null);  // reorder drop target (top edge) — shared for tasks and subtasks
-  const [subDropId,    setSubDropId]    = useState(null);  // task-body nest target
+  const [overId,       setOverId]       = useState(null);
+  const [subDropId,    setSubDropId]    = useState(null);
   const [hoveredId,    setHoveredId]    = useState(null);
-  const [addSubFor,    setAddSubFor]    = useState(null);  // task id with inline add-subtask input
-  const [subMode,      setSubMode]      = useState(new Set()); // add-slot targets in subtask mode
-  const [editingId,    setEditingId]    = useState(null);  // task id being edited
-  const [editingSubKey,setEditingSubKey]= useState(null);  // "view:pid:sid" subtask being edited
+  const [addSubFor,    setAddSubFor]    = useState(null);
+  const [subMode,      setSubMode]      = useState(new Set());
+  const [editingId,    setEditingId]    = useState(null);
+  const [editingSubKey,setEditingSubKey]= useState(null);
   const [wkOpen,       setWkOpen]       = useState(false);
   const [ov,           setOv]           = useState({});
   const [vw,           setVw]           = useState(() => window.innerWidth);
 
-  const drag         = useRef(null);
-  const dropMode     = useRef(null);
+  const drag     = useRef(null);
+  const dropMode = useRef(null);
 
-  const prevWeeksRef = useRef(null); // tracks last-saved weeks to diff on change
-  const ownSavesRef  = useRef({});   // week_key → timestamp of last save we sent
+  // Echo-suppression: store the updated_at we sent so realtime can skip our own saves
+  const taskSavesRef   = useRef({});  // { taskId → updatedAt }
+  const assignSavesRef = useRef({});  // { assignId → updatedAt }
 
-  // ── load weeks + meta from Supabase on mount ──────────────────────────────
+  // ── load on mount ─────────────────────────────────────────────────────────
   useEffect(() => {
-    Promise.all([fetchAllWeeks(), fetchMeta()]).then(([data, remoteMeta]) => {
-      const nowKey = currentWeekKey();
-      if (!data[nowKey]) data[nowKey] = [];
+    const nowKey = currentWeekKey();
 
-      // ── one-time dedup: fix any colliding IDs left over from the counter-based uid bug
-      const seen = new Set();
-      const fixedData = {};
-      let anyFixed = false;
-      for (const [wk, tasks] of Object.entries(data)) {
-        const fixedTasks = (tasks || []).map((t) => {
-          let task = { ...t };
-          if (!task.id || seen.has(task.id)) { task = { ...task, id: crypto.randomUUID() }; anyFixed = true; }
-          seen.add(task.id);
-          const subSeen = new Set();
-          task.subtasks = (task.subtasks || []).map((s) => {
-            let sub = { ...s };
-            if (!sub.id || seen.has(sub.id) || subSeen.has(sub.id)) { sub = { ...sub, id: crypto.randomUUID() }; anyFixed = true; }
-            seen.add(sub.id); subSeen.add(sub.id);
-            return sub;
-          });
-          return task;
-        });
-        fixedData[wk] = fixedTasks;
-      }
-      if (anyFixed) {
-        console.log("[fix-ids] Duplicate IDs found — saving cleaned data");
-        Object.entries(fixedData).forEach(([wk, tasks]) => {
-          if (JSON.stringify(tasks) !== JSON.stringify(data[wk])) upsertWeek(user.id, wk, tasks);
-        });
-      }
-      const cleanData = anyFixed ? fixedData : data;
+    Promise.all([fetchAllTasks(user.id), fetchAllAssignments(user.id), fetchMeta(user.id)])
+      .then(async ([taskData, assignData, remoteMeta]) => {
+        // One-time migration from old weeks table if tasks table is empty
+        if (Object.keys(taskData).length === 0) {
+          const migrated = await migrateFromWeeksTable(user.id);
+          if (migrated) {
+            [taskData, assignData] = await Promise.all([fetchAllTasks(user.id), fetchAllAssignments(user.id)]);
+          }
+        }
 
-      setWeeks(cleanData);
-      prevWeeksRef.current = cleanData;
+        if (!assignData[nowKey]) assignData[nowKey] = [];
 
-      // carry-over check with authoritative remote meta
-      const { shouldCarry, sourceKey } = checkCarryOver(data, remoteMeta);
-      if (shouldCarry) setCarry(sourceKey);
+        setTaskReg(taskData);
+        setWeekAssign(assignData);
 
-      // record this open
-      const newMeta = { ...remoteMeta, lastOpenedKey: nowKey };
-      setMeta(newMeta);
-      saveMetaLocal(newMeta);
-      upsertMeta(user.id, newMeta);
+        const { shouldCarry, sourceKey } = checkCarryOver(assignData, taskData, remoteMeta);
+        if (shouldCarry) setCarry(sourceKey);
 
-      setDataLoading(false);
-    }).catch((err) => {
-      console.error("Failed to load data:", err);
-      setDataLoading(false);
-    });
+        const newMeta = { ...remoteMeta, lastOpenedKey: nowKey };
+        setMeta(newMeta);
+        saveMetaLocal(newMeta);
+        upsertMeta(user.id, newMeta);
+
+        setDataLoading(false);
+      })
+      .catch((err) => {
+        console.error("Failed to load data:", err);
+        setDataLoading(false);
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── save only the weeks that changed ──────────────────────────────────────
-  useEffect(() => {
-    if (dataLoading || prevWeeksRef.current === null) return;
-    const prev = prevWeeksRef.current;
-    Object.keys(weeks).forEach((k) => {
-      if (weeks[k] !== prev[k]) {
-        const ts = new Date().toISOString();
-        ownSavesRef.current[k] = ts; // optimistic; updated below once DB confirms
-        upsertWeek(user.id, k, weeks[k], ts).then((dbTs) => {
-          if (dbTs) ownSavesRef.current[k] = dbTs;
-        });
-      }
-    });
-    prevWeeksRef.current = weeks;
-  }, [weeks]);
-
-  // ── real-time sync: apply changes made on other devices ───────────────────
+  // ── real-time sync ────────────────────────────────────────────────────────
   useEffect(() => {
     if (dataLoading) return;
     const channel = supabase
-      .channel("weeks-sync")
-      .on("postgres_changes",
-        { event: "*", schema: "public", table: "weeks" },
-        (payload) => {
-          const row = payload.new;
-          if (!row || row.week_key === "__meta__") return;
-          // Skip if this is an echo of our own save (or an older one)
-          const ourTs = ownSavesRef.current[row.week_key];
-          if (ourTs && row.updated_at <= ourTs) return;
-          setWeeks((prev) => {
-            const next = { ...prev, [row.week_key]: row.tasks };
-            prevWeeksRef.current = next;
-            return next;
+      .channel("app-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, (payload) => {
+        if (payload.eventType === "DELETE") {
+          const id = payload.old?.id; if (!id) return;
+          setTaskReg((prev) => { const n = { ...prev }; delete n[id]; return n; });
+        } else {
+          const r = payload.new; if (!r) return;
+          if (taskSavesRef.current[r.id] && r.updated_at <= taskSavesRef.current[r.id]) return;
+          setTaskReg((prev) => ({ ...prev, [r.id]: {
+            id: r.id, text: r.text, done: r.done, subtasks: r.subtasks ?? [],
+            priority: r.priority ?? null, type: r.type ?? null,
+            deadline: r.deadline ?? null, notes: r.notes ?? "",
+            createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+            updatedAt: r.updated_at,
+          }}));
+        }
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "week_tasks" }, (payload) => {
+        if (payload.eventType === "DELETE") {
+          const r = payload.old; if (!r) return;
+          if (assignSavesRef.current[r.id]) return;
+          setWeekAssign((prev) => ({
+            ...prev,
+            [r.week_key]: (prev[r.week_key] || []).filter((a) => a.id !== r.id),
+          }));
+        } else {
+          const r = payload.new; if (!r) return;
+          if (assignSavesRef.current[r.id] && r.updated_at <= assignSavesRef.current[r.id]) return;
+          const a = { id: r.id, taskId: r.task_id, weekKey: r.week_key, claimedDay: r.claimed_day ?? null, carried: r.carried, position: r.position };
+          setWeekAssign((prev) => {
+            const list = prev[r.week_key] || [];
+            const idx  = list.findIndex((x) => x.id === r.id);
+            const next = idx >= 0 ? list.map((x) => x.id === r.id ? a : x) : [...list, a].sort((x, y) => x.position - y.position);
+            return { ...prev, [r.week_key]: next };
           });
         }
-      )
+      })
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [dataLoading]);
@@ -151,8 +139,8 @@ export default function App({ user, onSignOut }) {
     return () => window.removeEventListener("resize", on);
   }, []);
 
+  // ── derived ───────────────────────────────────────────────────────────────
   const key      = ymd(monday);
-  const tasks    = weeks[key] || [];
   const nowKey   = currentWeekKey();
   const isThis   = key === nowKey;
   const today    = new Date(); today.setHours(0, 0, 0, 0);
@@ -160,51 +148,108 @@ export default function App({ user, onSignOut }) {
   const isToday  = (day) => ymd(addDays(monday, DAYS.indexOf(day))) === todayYmd;
   const mode     = vw >= 1340 ? "six" : vw >= 900 ? "five" : "one";
 
-  // ── state helpers ──────────────────────────────────────────────────────────
-  const setList  = (k, fn) => setWeeks((w) => ({ ...w, [k]: fn(w[k] || []) }));
-  const update   = (id, fn) => setList(key, (l) => l.map((t) => t.id === id ? fn(t) : t));
-  const setDraft = (t, v)   => setDrafts((d) => ({ ...d, [t]: v }));
-  const focusAdd = (t)      => { const el = document.getElementById("add-" + t); if (el) el.focus(); };
+  // Current week's task list: assignments ordered by position, merged with task data
+  const tasks = (weekAssign[key] || [])
+    .slice()
+    .sort((a, b) => a.position - b.position)
+    .map((wt) => ({ ...taskReg[wt.taskId], claimedDay: wt.claimedDay, carried: wt.carried, _wtId: wt.id }))
+    .filter((t) => t.id);
 
-  const exitSubMode = (target) =>
-    setSubMode((s) => { const n = new Set(s); n.delete(target); return n; });
-  const enterSubMode = (target) =>
-    setSubMode((s) => new Set(s).add(target));
+  // ── helpers ───────────────────────────────────────────────────────────────
+  const setDraft = (t, v) => setDrafts((d) => ({ ...d, [t]: v }));
+  const focusAdd = (t)    => { const el = document.getElementById("add-" + t); if (el) el.focus(); };
 
-  // ── task actions ───────────────────────────────────────────────────────────
-  function toggle(id) {
-    const t = tasks.find((x) => x.id === id); if (!t) return;
-    const nd = !t.done;
-    update(id, (x) => ({ ...x, done: nd, subtasks: x.subtasks.length ? x.subtasks.map((s) => ({ ...s, done: nd })) : x.subtasks }));
-    if (t.originId && t.originKey)
-      setList(t.originKey, (l) => l.map((o) => o.id === t.originId ? { ...o, checkedAway: nd ? fmtDate(today) : null } : o));
+  const exitSubMode  = (target) => setSubMode((s) => { const n = new Set(s); n.delete(target); return n; });
+  const enterSubMode = (target) => setSubMode((s) => new Set(s).add(target));
+
+  // Save a task and track updated_at for echo suppression
+  function saveTask(task) {
+    upsertTask(user.id, task).then((ts) => { if (ts) taskSavesRef.current[task.id] = ts; });
   }
 
-  function toggleSub(id, sid) {
-    update(id, (t) => {
-      const subs = t.subtasks.map((s) => s.id === sid ? { ...s, done: !s.done } : s);
-      return { ...t, subtasks: subs, done: subs.length > 0 && subs.every((s) => s.done) };
+  // Renumber positions and batch-save all assignments for a week
+  function saveAssignList(weekKey, list) {
+    const numbered = list.map((a, i) => ({ ...a, position: i }));
+    upsertAssignments(user.id, numbered).then((ts) => {
+      if (ts) numbered.forEach((a) => { assignSavesRef.current[a.id] = ts; });
     });
+    return numbered;
+  }
+
+  // Reorder/insert in tasks array (operates on merged task objects with claimedDay),
+  // then map back to the underlying assignments.
+  function applyTaskListAndSave(weekKey, newMergedList) {
+    const currentList = weekAssign[weekKey] || [];
+    const newAssignments = newMergedList.map((t, i) => {
+      const existing = currentList.find((a) => a.taskId === t.id) || { id: t._wtId };
+      return { ...existing, taskId: t.id, weekKey, claimedDay: t.claimedDay, carried: t.carried ?? false, position: i };
+    });
+    const numbered = saveAssignList(weekKey, newAssignments);
+    setWeekAssign((prev) => ({ ...prev, [weekKey]: numbered }));
+  }
+
+  // ── task actions ──────────────────────────────────────────────────────────
+  function toggle(id) {
+    const t = taskReg[id]; if (!t) return;
+    const done    = !t.done;
+    const updated = { ...t, done, subtasks: t.subtasks.map((s) => ({ ...s, done })) };
+    setTaskReg((prev) => ({ ...prev, [id]: updated }));
+    saveTask(updated);
+  }
+
+  function toggleSub(pid, sid) {
+    const t = taskReg[pid]; if (!t) return;
+    const subs    = t.subtasks.map((s) => s.id === sid ? { ...s, done: !s.done } : s);
+    const done    = subs.length > 0 && subs.every((s) => s.done);
+    const updated = { ...t, subtasks: subs, done };
+    setTaskReg((prev) => ({ ...prev, [pid]: updated }));
+    saveTask(updated);
   }
 
   function deleteTask(id) {
-    setList(key, (l) => l.filter((t) => t.id !== id));
+    const wt = (weekAssign[key] || []).find((a) => a.taskId === id); if (!wt) return;
+    const newList = (weekAssign[key] || []).filter((a) => a.taskId !== id);
+    const numbered = saveAssignList(key, newList);
+    setWeekAssign((prev) => ({ ...prev, [key]: numbered }));
+    assignSavesRef.current[wt.id] = "deleted";
+    deleteAssignment(wt.id);
+
+    // Delete task record if it has no other week assignments
+    const inOtherWeek = Object.entries(weekAssign).some(
+      ([wk, list]) => wk !== key && list.some((a) => a.taskId === id)
+    );
+    if (!inOtherWeek) {
+      setTaskReg((prev) => { const n = { ...prev }; delete n[id]; return n; });
+      deleteTaskById(id);
+    }
     if (addSubFor === id) setAddSubFor(null);
   }
 
   function deleteSub(pid, sid) {
-    update(pid, (t) => ({ ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) }));
+    const t = taskReg[pid]; if (!t) return;
+    const updated = { ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) };
+    setTaskReg((prev) => ({ ...prev, [pid]: updated }));
+    saveTask(updated);
   }
 
   function saveTaskEdit(id, text) {
     text = (text || "").trim();
-    if (text) setList(key, (l) => l.map((t) => t.id === id ? { ...t, text } : t));
+    if (text) {
+      const updated = { ...taskReg[id], text };
+      setTaskReg((prev) => ({ ...prev, [id]: updated }));
+      saveTask(updated);
+    }
     setEditingId(null);
   }
 
   function saveSubEdit(pid, sid, text) {
     text = (text || "").trim();
-    if (text) update(pid, (t) => ({ ...t, subtasks: t.subtasks.map((s) => s.id === sid ? { ...s, text } : s) }));
+    if (text) {
+      const t = taskReg[pid]; if (!t) return;
+      const updated = { ...t, subtasks: t.subtasks.map((s) => s.id === sid ? { ...s, text } : s) };
+      setTaskReg((prev) => ({ ...prev, [pid]: updated }));
+      saveTask(updated);
+    }
     setEditingSubKey(null);
   }
 
@@ -221,17 +266,37 @@ export default function App({ user, onSignOut }) {
 
   function addTask(target, providedText) {
     const text = (providedText ?? drafts[target] ?? "").trim(); if (!text) return;
-    setList(key, (l) => placeInGroup(l, mkTask(text, { claimedDay: target === "week" ? null : target })));
+    const claimedDay = target === "week" ? null : target;
+    const task = mkTask(text);
+
+    // Find insertion index using placeInGroup on merged task list
+    const mockTask   = { ...task, claimedDay };
+    const newMerged  = placeInGroup(tasks, mockTask);
+    const insertIdx  = newMerged.findIndex((t) => t.id === task.id);
+
+    const assignment = { id: uid(), taskId: task.id, weekKey: key, claimedDay, carried: false, position: insertIdx };
+    const currentList = weekAssign[key] || [];
+    const spliced = [...currentList.slice(0, insertIdx), assignment, ...currentList.slice(insertIdx)];
+    const numbered = saveAssignList(key, spliced);
+
+    setTaskReg((prev) => ({ ...prev, [task.id]: task }));
+    setWeekAssign((prev) => ({ ...prev, [key]: numbered }));
+    assignSavesRef.current[assignment.id] = "pending";
+    upsertTask(user.id, task).then((ts) => { if (ts) taskSavesRef.current[task.id] = ts; });
     setDraft(target, "");
   }
 
   function addTaskAsSubtask(target, providedText) {
     const text = (providedText ?? drafts[target] ?? "").trim(); if (!text) return;
-    const lastTask = target === "week"
+    const claimedDay = target === "week" ? null : target;
+    const lastTask   = claimedDay === null
       ? tasks.at(-1)
-      : tasks.filter((t) => t.claimedDay === target).at(-1) ?? tasks.at(-1);
+      : tasks.filter((t) => t.claimedDay === claimedDay).at(-1) ?? tasks.at(-1);
     if (!lastTask) { addTask(target, text); return; }
-    update(lastTask.id, (t) => ({ ...t, subtasks: [...t.subtasks, mkSub(text)] }));
+    const t = taskReg[lastTask.id]; if (!t) return;
+    const updated = { ...t, subtasks: [...t.subtasks, mkSub(text)] };
+    setTaskReg((prev) => ({ ...prev, [t.id]: updated }));
+    saveTask(updated);
     setDraft(target, "");
     setTimeout(() => document.getElementById("add-" + target)?.focus(), 0);
   }
@@ -239,59 +304,70 @@ export default function App({ user, onSignOut }) {
   function addSubtask(parentId) {
     const k    = `sub-${parentId}`;
     const text = (drafts[k] || "").trim(); if (!text) return;
-    update(parentId, (t) => ({ ...t, subtasks: [...t.subtasks, mkSub(text)] }));
+    const t    = taskReg[parentId]; if (!t) return;
+    const updated = { ...t, subtasks: [...t.subtasks, mkSub(text)] };
+    setTaskReg((prev) => ({ ...prev, [parentId]: updated }));
+    saveTask(updated);
     setDraft(k, ""); setAddSubFor(null);
   }
 
   function claim(id, day) {
-    setList(key, (l) => {
-      const i = l.findIndex((t) => t.id === id); if (i < 0) return l;
-      const t = { ...l[i], claimedDay: day };
-      const rest = [...l.slice(0, i), ...l.slice(i + 1)];
-      return placeInGroup(rest, t);
-    });
+    const idx = tasks.findIndex((t) => t.id === id); if (idx < 0) return;
+    const moved     = { ...tasks[idx], claimedDay: day };
+    const rest      = tasks.filter((_, i) => i !== idx);
+    const newMerged = placeInGroup(rest, moved);
+    applyTaskListAndSave(key, newMerged);
   }
 
-  const claimSub = (pid, sid, day) =>
-    update(pid, (t) => ({ ...t, subtasks: t.subtasks.map((s) => s.id === sid ? { ...s, claimedDay: day } : s) }));
+  const claimSub = (pid, sid, day) => {
+    const t = taskReg[pid]; if (!t) return;
+    const updated = { ...t, subtasks: t.subtasks.map((s) => s.id === sid ? { ...s, claimedDay: day } : s) };
+    setTaskReg((prev) => ({ ...prev, [pid]: updated }));
+    saveTask(updated);
+  };
 
   function reorder(id, targetId) {
     if (id === targetId) return;
-    setList(key, (l) => {
-      const from = l.findIndex((t) => t.id === id); if (from < 0) return l;
-      const t    = l[from];
-      const rest = [...l.slice(0, from), ...l.slice(from + 1)];
-      const to   = rest.findIndex((x) => x.id === targetId);
-      const out  = [...rest]; out.splice(to, 0, t); return out;
-    });
+    const list = [...tasks];
+    const from = list.findIndex((t) => t.id === id); if (from < 0) return;
+    const [moved] = list.splice(from, 1);
+    const to = list.findIndex((t) => t.id === targetId);
+    list.splice(to, 0, moved);
+    applyTaskListAndSave(key, list);
   }
 
   function reorderSub(pid, fromSid, targetSid) {
     if (fromSid === targetSid) return;
-    update(pid, (t) => {
-      const from = t.subtasks.findIndex((s) => s.id === fromSid); if (from < 0) return t;
-      const sub  = t.subtasks[from];
-      const rest = [...t.subtasks.slice(0, from), ...t.subtasks.slice(from + 1)];
-      const to   = rest.findIndex((s) => s.id === targetSid);
-      const out  = [...rest]; out.splice(to, 0, sub);
-      return { ...t, subtasks: out };
-    });
+    const t = taskReg[pid]; if (!t) return;
+    const subs = [...t.subtasks];
+    const from = subs.findIndex((s) => s.id === fromSid); if (from < 0) return;
+    const [moved] = subs.splice(from, 1);
+    const to = subs.findIndex((s) => s.id === targetSid);
+    subs.splice(to, 0, moved);
+    const updated = { ...t, subtasks: subs };
+    setTaskReg((prev) => ({ ...prev, [pid]: updated }));
+    saveTask(updated);
   }
 
   function promoteSubtask(pid, sid) {
-    setList(key, (l) => {
-      const parent = l.find((t) => t.id === pid);
-      const sub    = parent?.subtasks.find((s) => s.id === sid);
-      if (!sub) return l;
-      const parentIdx = l.findIndex((t) => t.id === pid);
-      const newTask = mkTask(sub.text, { claimedDay: sub.claimedDay });
-      const result = l.map((t) => t.id === pid ? { ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) } : t);
-      result.splice(parentIdx + 1, 0, newTask);
-      return result;
-    });
+    const t   = taskReg[pid]; if (!t) return;
+    const sub = t.subtasks.find((s) => s.id === sid); if (!sub) return;
+
+    const updatedParent = { ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) };
+    const newTask       = mkTask(sub.text);
+    const parentIdx     = tasks.findIndex((x) => x.id === pid);
+
+    // Insert new task immediately after parent
+    const newList = [...tasks];
+    newList.splice(parentIdx + 1, 0, { ...newTask, claimedDay: sub.claimedDay, carried: false, _wtId: null });
+    applyTaskListAndSave(key, newList);
+
+    setTaskReg((prev) => ({ ...prev, [pid]: updatedParent, [newTask.id]: newTask }));
+    saveTask(updatedParent);
+    upsertTask(user.id, newTask).then((ts) => { if (ts) taskSavesRef.current[newTask.id] = ts; });
   }
 
-  // ── drag helpers ───────────────────────────────────────────────────────────
+  // ── drag helpers ──────────────────────────────────────────────────────────
   const cleanupDrag = () => {
     drag.current = null; dropMode.current = null;
     setOverId(null); setSubDropId(null);
@@ -308,63 +384,73 @@ export default function App({ user, onSignOut }) {
     if (d.t === "task") {
       claim(d.id, null);
     } else {
-      setList(key, (l) => {
-        const parent = l.find((t) => t.id === d.pid);
-        const sub    = parent?.subtasks.find((s) => s.id === d.sid);
-        if (!sub) return l;
-        return [
-          ...l.map((t) => t.id === d.pid ? { ...t, subtasks: t.subtasks.filter((s) => s.id !== d.sid) } : t),
-          mkTask(sub.text, { claimedDay: sub.claimedDay }),
-        ];
-      });
+      const parent = taskReg[d.pid]; if (!parent) { cleanupDrag(); return; }
+      const sub    = parent.subtasks.find((s) => s.id === d.sid); if (!sub) { cleanupDrag(); return; }
+      const updatedParent = { ...parent, subtasks: parent.subtasks.filter((s) => s.id !== d.sid) };
+      const newTask       = mkTask(sub.text);
+      const newList       = [...tasks, { ...newTask, claimedDay: sub.claimedDay, carried: false, _wtId: null }];
+      applyTaskListAndSave(key, newList);
+      setTaskReg((prev) => ({ ...prev, [d.pid]: updatedParent, [newTask.id]: newTask }));
+      saveTask(updatedParent);
+      upsertTask(user.id, newTask).then((ts) => { if (ts) taskSavesRef.current[newTask.id] = ts; });
     }
     cleanupDrag();
   }
 
   function dropAsSubtask(parentId) {
     const d = drag.current; if (!d || d.t !== "task" || d.id === parentId) { cleanupDrag(); return; }
-    setList(key, (l) => {
-      const child = l.find((t) => t.id === d.id); if (!child) return l;
-      const newSubs = [mkSub(child.text, child.done), ...child.subtasks.map((s) => mkSub(s.text, s.done))];
-      return l
-        .filter((t) => t.id !== d.id)
-        .map((t) => t.id === parentId ? { ...t, subtasks: [...t.subtasks, ...newSubs] } : t);
+    const child  = taskReg[d.id]; if (!child) { cleanupDrag(); return; }
+    const parent = taskReg[parentId]; if (!parent) { cleanupDrag(); return; }
+    const newSubs        = [mkSub(child.text, child.done), ...child.subtasks.map((s) => mkSub(s.text, s.done))];
+    const updatedParent  = { ...parent, subtasks: [...parent.subtasks, ...newSubs] };
+
+    const wt = (weekAssign[key] || []).find((a) => a.taskId === d.id);
+    const newList = tasks.filter((t) => t.id !== d.id);
+    applyTaskListAndSave(key, newList);
+
+    const inOtherWeek = Object.entries(weekAssign).some(
+      ([wk, list]) => wk !== key && list.some((a) => a.taskId === d.id)
+    );
+    setTaskReg((prev) => {
+      const n = { ...prev, [parentId]: updatedParent };
+      if (!inOtherWeek) delete n[d.id];
+      return n;
     });
+    saveTask(updatedParent);
+    if (wt) { assignSavesRef.current[wt.id] = "deleted"; deleteAssignment(wt.id); }
+    if (!inOtherWeek) deleteTaskById(d.id);
     cleanupDrag();
   }
 
   // ── carry-over ─────────────────────────────────────────────────────────────
   const openCarryOver = () => {
-    const { sourceKey } = checkCarryOver(weeks, { ...meta, carriedKeys: [] });
-    const sk = sourceKey || meta.lastOpenedKey;
-    if (sk && sk !== key) setCarry(sk);
+    const sk = meta.lastOpenedKey && meta.lastOpenedKey !== key ? meta.lastOpenedKey : null;
+    if (sk) setCarry(sk);
   };
 
   function confirmCarry(selected) {
-    const sourceKey = carry;
-    setWeeks((w) => {
-      const cur = [...(w[nowKey] || [])];
-      const src = (w[sourceKey] || []).map((t) => {
-        if (selected.has(t.id)) {
-          cur.push(mkTask(t.text, { carried: true, originId: t.id, originKey: sourceKey, subtasks: t.subtasks.map((s) => mkSub(s.text, false)) }));
-          return { ...t, carriedAway: true };
-        }
-        return t;
-      });
-      return { ...w, [nowKey]: cur, [sourceKey]: src };
+    const currentList = weekAssign[nowKey] || [];
+    const maxPos      = currentList.reduce((m, a) => Math.max(m, a.position), -1);
+    const newAssignments = [];
+    let pos = maxPos + 1;
+    for (const taskId of selected) {
+      newAssignments.push({ id: uid(), taskId, weekKey: nowKey, claimedDay: null, carried: true, position: pos++ });
+    }
+    const merged  = [...currentList, ...newAssignments];
+    const numbered = merged.map((a, i) => ({ ...a, position: i }));
+    const ts = new Date().toISOString();
+    upsertAssignments(user.id, numbered).then((savedTs) => {
+      if (savedTs) numbered.forEach((a) => { assignSavesRef.current[a.id] = savedTs; });
     });
-    setMeta((m) => {
-      const next = { ...m, carriedKeys: [...(m.carriedKeys || []), nowKey] };
-      saveMetaLocal(next); upsertMeta(user.id, next); return next;
-    });
+    setWeekAssign((prev) => ({ ...prev, [nowKey]: numbered }));
+    const newMeta = { ...meta, carryDoneKey: nowKey };
+    setMeta(newMeta); saveMetaLocal(newMeta); upsertMeta(user.id, newMeta);
     setCarry(null);
   }
 
   function dismissCarry() {
-    setMeta((m) => {
-      const next = { ...m, carriedKeys: [...(m.carriedKeys || []), nowKey] };
-      saveMetaLocal(next); upsertMeta(user.id, next); return next;
-    });
+    const newMeta = { ...meta, carryDoneKey: nowKey };
+    setMeta(newMeta); saveMetaLocal(newMeta); upsertMeta(user.id, newMeta);
     setCarry(null);
   }
 
@@ -397,7 +483,7 @@ export default function App({ user, onSignOut }) {
     return { total, done };
   }
 
-  // ── inlined renderers (plain functions → no nested component → no focus loss) ──
+  // ── inlined renderers ─────────────────────────────────────────────────────
 
   function taskRow(task, view, day) {
     const subs      = floatDone(
@@ -410,13 +496,6 @@ export default function App({ user, onSignOut }) {
     const isEditing  = editingId === task.id;
     const fs         = view === "day" ? 13 : 14;
 
-    let meta = null;
-    if (view === "week") {
-      if (task.checkedAway)  meta = <span style={{ fontStyle: "italic", color: C.done }}>Checked {task.checkedAway}</span>;
-      else if (task.carriedAway) meta = <span style={{ color: C.sub }}>Carried over</span>;
-    }
-
-    // Inline edit style — matches the text visually, no border box
     const editInputStyle = {
       flex: 1, minWidth: 0, fontSize: fs, lineHeight: 1.35, color: txt,
       border: "none", outline: "none", background: "transparent",
@@ -433,7 +512,7 @@ export default function App({ user, onSignOut }) {
         onDragOver={(e) => {
           e.preventDefault();
           if (drag.current?.t !== "task" || drag.current?.id === task.id) return;
-          const rect = e.currentTarget.getBoundingClientRect();
+          const rect  = e.currentTarget.getBoundingClientRect();
           const isTop = (e.clientY - rect.top) / rect.height < 0.38;
           if (isTop && view === "week") {
             dropMode.current = { type: "reorder", id: task.id };
@@ -450,11 +529,9 @@ export default function App({ user, onSignOut }) {
         onDrop={(e) => {
           if (drag.current?.t !== "task") return;
           if (dropMode.current?.type === "subtask" && dropMode.current?.id === task.id) {
-            e.stopPropagation();
-            dropAsSubtask(task.id);
+            e.stopPropagation(); dropAsSubtask(task.id);
           } else if (view === "week") {
-            e.stopPropagation();
-            reorder(drag.current.id, task.id); cleanupDrag();
+            e.stopPropagation(); reorder(drag.current.id, task.id); cleanupDrag();
           }
         }}
         style={{
@@ -503,7 +580,6 @@ export default function App({ user, onSignOut }) {
               )}
               {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500 }}>{task.claimedDay}</span>}
             </div>
-            {meta && <div style={{ fontSize: 11, marginTop: 2 }}>{meta}</div>}
 
             {/* subtasks list */}
             {subs.length > 0 && (
@@ -526,7 +602,7 @@ export default function App({ user, onSignOut }) {
                       onMouseLeave={() => setHoveredId((h) => h === `week:sub:${s.id}` ? null : h)}
                       onDragStart={(e) => { if (subEditing) { e.preventDefault(); return; } e.stopPropagation(); drag.current = { t: "sub", pid: task.id, sid: s.id }; e.dataTransfer.effectAllowed = "move"; }}
                       onDragOver={(e) => {
-                        e.preventDefault(); e.stopPropagation(); // don't bubble to parent task
+                        e.preventDefault(); e.stopPropagation();
                         if (drag.current?.t === "sub" && drag.current?.pid === task.id && drag.current?.sid !== s.id)
                           setOverId(s.id);
                       }}
@@ -652,11 +728,11 @@ export default function App({ user, onSignOut }) {
           value={drafts[target] || ""}
           onChange={(e) => setDraft(target, e.target.value)}
           onKeyDown={(e) => {
-            const raw = e.target.value; // read DOM value directly — closure drafts can be stale
+            const raw = e.target.value;
             if (e.key === "Enter") {
               if (inSubMode) {
                 if (raw.trim()) addTaskAsSubtask(target, raw);
-                else exitSubMode(target); // empty Enter → back to parent mode
+                else exitSubMode(target);
               } else {
                 addTask(target, raw);
               }
@@ -738,9 +814,9 @@ export default function App({ user, onSignOut }) {
     tasks.some((t) => t.claimedDay === d) ||
     tasks.some((t) => t.subtasks.some((s) => s.claimedDay === d))
   );
-  const weekendOpen = weekendHasContent || wkOpen;
-  const weekendCols = mode === "one" ? "minmax(0,1fr)" : "repeat(2,minmax(0,1fr))";
-  const carryLeftovers = carry ? getLeftovers(weeks, carry) : [];
+  const weekendOpen   = weekendHasContent || wkOpen;
+  const weekendCols   = mode === "one" ? "minmax(0,1fr)" : "repeat(2,minmax(0,1fr))";
+  const carryLeftovers = carry ? getLeftovers(weekAssign, taskReg, carry, nowKey) : [];
 
   // ── render ─────────────────────────────────────────────────────────────────
   if (dataLoading) {
@@ -787,8 +863,8 @@ export default function App({ user, onSignOut }) {
           </button>
           <button onClick={async () => {
             if (!window.confirm("Delete ALL tasks for ALL weeks? This cannot be undone.")) return;
-            await supabase.from("weeks").delete().eq("user_id", user.id).neq("week_key", "__meta__");
-            setWeeks({ [key]: [] }); prevWeeksRef.current = { [key]: [] };
+            await supabase.from("tasks").delete().eq("user_id", user.id);
+            setTaskReg({}); setWeekAssign({ [key]: [] });
           }} style={{ ...ghost, fontSize: 11.5, color: "#c0392b", borderColor: "#e8b4b0" }}>Clear all</button>
           <button onClick={onSignOut} title={`Signed in as ${user.email}`} style={{ ...ghost, fontSize: 11.5 }}>Sign out</button>
         </div>

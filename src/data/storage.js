@@ -1,53 +1,208 @@
 import { supabase } from "./supabase.js";
 
-const META_KEY = "__meta__"; // reserved week_key row for per-user meta
+// ── Tasks ──────────────────────────────────────────────────────────────────────
 
-// ── Weeks ─────────────────────────────────────────────────────────────────────
-
-export async function fetchAllWeeks() {
+export async function fetchAllTasks(userId) {
   const { data, error } = await supabase
-    .from("weeks")
-    .select("week_key, tasks")
-    .neq("week_key", META_KEY); // exclude the meta row
+    .from("tasks")
+    .select("*")
+    .eq("user_id", userId);
   if (error) throw error;
-  return Object.fromEntries(data.map((r) => [r.week_key, r.tasks]));
+  return Object.fromEntries(data.map((r) => [r.id, rowToTask(r)]));
 }
 
-export async function upsertWeek(userId, weekKey, tasks, updatedAt) {
-  const { data, error } = await supabase.from("weeks").upsert(
-    { user_id: userId, week_key: weekKey, tasks, updated_at: updatedAt || new Date().toISOString() },
-    { onConflict: "user_id,week_key" }
-  ).select("updated_at");
-  if (error) { console.error("Supabase save error:", error.message); return null; }
+export async function upsertTask(userId, task) {
+  const ts = new Date().toISOString();
+  const { data, error } = await supabase.from("tasks").upsert({
+    id:         task.id,
+    user_id:    userId,
+    text:       task.text,
+    done:       task.done,
+    subtasks:   task.subtasks ?? [],
+    priority:   task.priority ?? null,
+    type:       task.type ?? null,
+    deadline:   task.deadline ?? null,
+    notes:      task.notes ?? "",
+    updated_at: ts,
+  }, { onConflict: "id" }).select("updated_at");
+  if (error) { console.error("upsertTask:", error.message); return null; }
   return data?.[0]?.updated_at ?? null;
 }
 
-// ── Meta: per-user, stored in Supabase as a reserved row ─────────────────────
+export async function deleteTaskById(taskId) {
+  const { error } = await supabase.from("tasks").delete().eq("id", taskId);
+  if (error) console.error("deleteTaskById:", error.message);
+}
 
-const defaultMeta = () => ({ lastOpenedKey: null, carriedKeys: [] });
+function rowToTask(r) {
+  return {
+    id:        r.id,
+    text:      r.text,
+    done:      r.done,
+    subtasks:  r.subtasks ?? [],
+    priority:  r.priority ?? null,
+    type:      r.type ?? null,
+    deadline:  r.deadline ?? null,
+    notes:     r.notes ?? "",
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    updatedAt: r.updated_at,
+  };
+}
 
-export async function fetchMeta() {
+// ── Week Assignments ───────────────────────────────────────────────────────────
+
+export async function fetchAllAssignments(userId) {
+  const { data, error } = await supabase
+    .from("week_tasks")
+    .select("*")
+    .eq("user_id", userId)
+    .order("position", { ascending: true });
+  if (error) throw error;
+  const result = {};
+  for (const r of data) {
+    if (!result[r.week_key]) result[r.week_key] = [];
+    result[r.week_key].push(rowToAssignment(r));
+  }
+  return result;
+}
+
+export async function upsertAssignment(userId, a) {
+  const ts = new Date().toISOString();
+  const { data, error } = await supabase.from("week_tasks").upsert(
+    assignmentToRow(userId, a, ts),
+    { onConflict: "id" }
+  ).select("id, updated_at");
+  if (error) { console.error("upsertAssignment:", error.message); return null; }
+  return data?.[0] ?? null;
+}
+
+export async function upsertAssignments(userId, assignments) {
+  if (!assignments.length) return;
+  const ts = new Date().toISOString();
+  const rows = assignments.map((a) => assignmentToRow(userId, a, ts));
+  const { error } = await supabase.from("week_tasks").upsert(rows, { onConflict: "id" });
+  if (error) console.error("upsertAssignments:", error.message);
+  return ts;
+}
+
+export async function deleteAssignment(assignmentId) {
+  const { error } = await supabase.from("week_tasks").delete().eq("id", assignmentId);
+  if (error) console.error("deleteAssignment:", error.message);
+}
+
+function rowToAssignment(r) {
+  return {
+    id:         r.id,
+    taskId:     r.task_id,
+    weekKey:    r.week_key,
+    claimedDay: r.claimed_day ?? null,
+    carried:    r.carried ?? false,
+    position:   r.position ?? 0,
+    updatedAt:  r.updated_at,
+  };
+}
+
+function assignmentToRow(userId, a, ts) {
+  return {
+    id:          a.id,
+    task_id:     a.taskId,
+    user_id:     userId,
+    week_key:    a.weekKey,
+    claimed_day: a.claimedDay ?? null,
+    carried:     a.carried ?? false,
+    position:    a.position ?? 0,
+    updated_at:  ts,
+  };
+}
+
+// ── Meta ───────────────────────────────────────────────────────────────────────
+
+const defaultMeta = () => ({ lastOpenedKey: null, carryDoneKey: null });
+
+export async function fetchMeta(userId) {
   const { data } = await supabase
-    .from("weeks")
-    .select("tasks")
-    .eq("week_key", META_KEY)
+    .from("user_meta")
+    .select("last_opened_key, carry_done_key")
+    .eq("user_id", userId)
     .maybeSingle();
-  return data?.tasks ?? defaultMeta();
+  if (!data) return defaultMeta();
+  return { lastOpenedKey: data.last_opened_key ?? null, carryDoneKey: data.carry_done_key ?? null };
 }
 
 export async function upsertMeta(userId, meta) {
-  await supabase.from("weeks").upsert(
-    { user_id: userId, week_key: META_KEY, tasks: meta, updated_at: new Date().toISOString() },
-    { onConflict: "user_id,week_key" }
-  );
+  await supabase.from("user_meta").upsert({
+    user_id:         userId,
+    last_opened_key: meta.lastOpenedKey ?? null,
+    carry_done_key:  meta.carryDoneKey ?? null,
+    updated_at:      new Date().toISOString(),
+  }, { onConflict: "user_id" });
 }
 
-// localStorage kept as fast initial fallback while Supabase loads
-const LS_META = "wt_meta";
+const LS_META = "wt_meta_v2";
 export function loadMetaLocal() {
   try { return JSON.parse(localStorage.getItem(LS_META)) ?? defaultMeta(); }
   catch { return defaultMeta(); }
 }
 export function saveMetaLocal(meta) {
   try { localStorage.setItem(LS_META, JSON.stringify(meta)); } catch {}
+}
+
+// ── One-time migration from old weeks table ────────────────────────────────────
+
+export async function migrateFromWeeksTable(userId) {
+  const { data: weeksData, error } = await supabase
+    .from("weeks")
+    .select("week_key, tasks")
+    .eq("user_id", userId)
+    .neq("week_key", "__meta__");
+  if (error || !weeksData?.length) return false;
+
+  const taskRows = [];
+  const assignmentRows = [];
+  const seenTaskIds = new Set();
+
+  for (const { week_key, tasks } of weeksData) {
+    (tasks || []).forEach((t, idx) => {
+      if (!seenTaskIds.has(t.id)) {
+        seenTaskIds.add(t.id);
+        taskRows.push({
+          id:         t.id,
+          user_id:    userId,
+          text:       t.text ?? "",
+          done:       t.done ?? false,
+          subtasks:   (t.subtasks || []).map((s) => ({
+            id: s.id, text: s.text, done: s.done ?? false, claimedDay: s.claimedDay ?? null,
+          })),
+          priority:   t.priority ?? null,
+          type:       t.type ?? null,
+          deadline:   t.deadline ?? null,
+          notes:      t.notes ?? "",
+          created_at: t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      assignmentRows.push({
+        id:          crypto.randomUUID(),
+        task_id:     t.id,
+        user_id:     userId,
+        week_key,
+        claimed_day: t.claimedDay ?? null,
+        carried:     t.carried ?? false,
+        position:    idx,
+        updated_at:  new Date().toISOString(),
+      });
+    });
+  }
+
+  if (!taskRows.length) return false;
+
+  const { error: te } = await supabase.from("tasks").insert(taskRows);
+  if (te) { console.error("[migration] tasks insert failed:", te.message); return false; }
+
+  const { error: ae } = await supabase.from("week_tasks").insert(assignmentRows);
+  if (ae) { console.error("[migration] week_tasks insert failed:", ae.message); return false; }
+
+  console.log(`[migration] ${taskRows.length} tasks, ${assignmentRows.length} assignments migrated`);
+  return true;
 }

@@ -7,18 +7,12 @@ export function mkTask(text, overrides = {}) {
     id: uid(),
     text,
     done: false,
-    carried: false,
-    claimedDay: null,
     subtasks: [],
     createdAt: Date.now(),
     priority: null,
     type: null,
     deadline: null,
     notes: "",
-    originId: null,
-    originKey: null,
-    carriedAway: false,
-    checkedAway: null,
     ...overrides,
   };
 }
