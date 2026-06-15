@@ -53,7 +53,9 @@ export default function App({ user, onSignOut }) {
   const assignSavesRef = useRef({});  // { assignId → updatedAt }
 
   const undoStack = useRef([]);   // undo history — array of { taskReg, weekAssign } snapshots
+  const redoStack = useRef([]);   // redo history
   const undoRef   = useRef(null); // stable ref to latest undo fn (avoids stale closure in listener)
+  const redoRef   = useRef(null);
 
   // ── load on mount ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -144,11 +146,11 @@ export default function App({ user, onSignOut }) {
 
   useEffect(() => {
     const onKeyDown = (e) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== "z" || e.shiftKey) return;
+      if (!(e.metaKey || e.ctrlKey)) return;
       const tag = document.activeElement?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      e.preventDefault();
-      undoRef.current?.();
+      if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undoRef.current?.(); }
+      if ((e.key === "z" && e.shiftKey) || e.key === "y") { e.preventDefault(); redoRef.current?.(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -170,18 +172,15 @@ export default function App({ user, onSignOut }) {
     .map((wt) => ({ ...taskReg[wt.taskId], claimedDay: wt.claimedDay, carried: wt.carried, _wtId: wt.id }))
     .filter((t) => t.id);
 
-  // ── undo ──────────────────────────────────────────────────────────────────
+  // ── undo / redo ───────────────────────────────────────────────────────────
   const MAX_UNDO = 20;
 
   const saveSnapshot = () => {
     undoStack.current = [{ taskReg, weekAssign }, ...undoStack.current.slice(0, MAX_UNDO - 1)];
+    redoStack.current = []; // new action clears redo history
   };
 
-  function undo() {
-    if (!undoStack.current.length) return;
-    const snap = undoStack.current.shift();
-
-    // Sync tasks: upsert changed ones, delete ones that didn't exist in snapshot
+  function syncSnapshotToDb(snap) {
     for (const task of Object.values(snap.taskReg)) {
       if (JSON.stringify(task) !== JSON.stringify(taskReg[task.id]))
         upsertTask(user.id, task);
@@ -189,8 +188,6 @@ export default function App({ user, onSignOut }) {
     for (const id of Object.keys(taskReg)) {
       if (!snap.taskReg[id]) deleteTaskById(id);
     }
-
-    // Sync assignments: for each week that changed, upsert snapshot list and delete added ones
     const allWeeks = new Set([...Object.keys(snap.weekAssign), ...Object.keys(weekAssign)]);
     for (const wk of allWeeks) {
       const snapList = snap.weekAssign[wk] || [];
@@ -201,11 +198,27 @@ export default function App({ user, onSignOut }) {
         if (snapList.length) upsertAssignments(user.id, snapList);
       }
     }
+  }
 
+  function undo() {
+    if (!undoStack.current.length) return;
+    const snap = undoStack.current.shift();
+    redoStack.current = [{ taskReg, weekAssign }, ...redoStack.current.slice(0, MAX_UNDO - 1)];
+    syncSnapshotToDb(snap);
     setTaskReg(snap.taskReg);
     setWeekAssign(snap.weekAssign);
   }
   undoRef.current = undo;
+
+  function redo() {
+    if (!redoStack.current.length) return;
+    const snap = redoStack.current.shift();
+    undoStack.current = [{ taskReg, weekAssign }, ...undoStack.current.slice(0, MAX_UNDO - 1)];
+    syncSnapshotToDb(snap);
+    setTaskReg(snap.taskReg);
+    setWeekAssign(snap.weekAssign);
+  }
+  redoRef.current = redo;
 
   // ── helpers ───────────────────────────────────────────────────────────────
   const setDraft = (t, v) => setDrafts((d) => ({ ...d, [t]: v }));
