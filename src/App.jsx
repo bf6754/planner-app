@@ -52,6 +52,9 @@ export default function App({ user, onSignOut }) {
   const taskSavesRef   = useRef({});  // { taskId → updatedAt }
   const assignSavesRef = useRef({});  // { assignId → updatedAt }
 
+  const undoStack = useRef([]);   // undo history — array of { taskReg, weekAssign } snapshots
+  const undoRef   = useRef(null); // stable ref to latest undo fn (avoids stale closure in listener)
+
   // ── load on mount ─────────────────────────────────────────────────────────
   useEffect(() => {
     const nowKey = currentWeekKey();
@@ -139,6 +142,18 @@ export default function App({ user, onSignOut }) {
     return () => window.removeEventListener("resize", on);
   }, []);
 
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== "z" || e.shiftKey) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      e.preventDefault();
+      undoRef.current?.();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   // ── derived ───────────────────────────────────────────────────────────────
   const key      = ymd(monday);
   const nowKey   = currentWeekKey();
@@ -154,6 +169,43 @@ export default function App({ user, onSignOut }) {
     .sort((a, b) => a.position - b.position)
     .map((wt) => ({ ...taskReg[wt.taskId], claimedDay: wt.claimedDay, carried: wt.carried, _wtId: wt.id }))
     .filter((t) => t.id);
+
+  // ── undo ──────────────────────────────────────────────────────────────────
+  const MAX_UNDO = 20;
+
+  const saveSnapshot = () => {
+    undoStack.current = [{ taskReg, weekAssign }, ...undoStack.current.slice(0, MAX_UNDO - 1)];
+  };
+
+  function undo() {
+    if (!undoStack.current.length) return;
+    const snap = undoStack.current.shift();
+
+    // Sync tasks: upsert changed ones, delete ones that didn't exist in snapshot
+    for (const task of Object.values(snap.taskReg)) {
+      if (JSON.stringify(task) !== JSON.stringify(taskReg[task.id]))
+        upsertTask(user.id, task);
+    }
+    for (const id of Object.keys(taskReg)) {
+      if (!snap.taskReg[id]) deleteTaskById(id);
+    }
+
+    // Sync assignments: for each week that changed, upsert snapshot list and delete added ones
+    const allWeeks = new Set([...Object.keys(snap.weekAssign), ...Object.keys(weekAssign)]);
+    for (const wk of allWeeks) {
+      const snapList = snap.weekAssign[wk] || [];
+      const curList  = weekAssign[wk] || [];
+      if (JSON.stringify(snapList) !== JSON.stringify(curList)) {
+        const snapIds = new Set(snapList.map((a) => a.id));
+        for (const a of curList) { if (!snapIds.has(a.id)) deleteAssignment(a.id); }
+        if (snapList.length) upsertAssignments(user.id, snapList);
+      }
+    }
+
+    setTaskReg(snap.taskReg);
+    setWeekAssign(snap.weekAssign);
+  }
+  undoRef.current = undo;
 
   // ── helpers ───────────────────────────────────────────────────────────────
   const setDraft = (t, v) => setDrafts((d) => ({ ...d, [t]: v }));
@@ -191,6 +243,7 @@ export default function App({ user, onSignOut }) {
   // ── task actions ──────────────────────────────────────────────────────────
   function toggle(id) {
     const t = taskReg[id]; if (!t) return;
+    saveSnapshot();
     const done    = !t.done;
     const updated = { ...t, done, subtasks: t.subtasks.map((s) => ({ ...s, done })) };
     setTaskReg((prev) => ({ ...prev, [id]: updated }));
@@ -199,6 +252,7 @@ export default function App({ user, onSignOut }) {
 
   function toggleSub(pid, sid) {
     const t = taskReg[pid]; if (!t) return;
+    saveSnapshot();
     const subs    = t.subtasks.map((s) => s.id === sid ? { ...s, done: !s.done } : s);
     const done    = subs.length > 0 && subs.every((s) => s.done);
     const updated = { ...t, subtasks: subs, done };
@@ -208,6 +262,7 @@ export default function App({ user, onSignOut }) {
 
   function deleteTask(id) {
     const wt = (weekAssign[key] || []).find((a) => a.taskId === id); if (!wt) return;
+    saveSnapshot();
     const newList = (weekAssign[key] || []).filter((a) => a.taskId !== id);
     const numbered = saveAssignList(key, newList);
     setWeekAssign((prev) => ({ ...prev, [key]: numbered }));
@@ -227,6 +282,7 @@ export default function App({ user, onSignOut }) {
 
   function deleteSub(pid, sid) {
     const t = taskReg[pid]; if (!t) return;
+    saveSnapshot();
     const updated = { ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) };
     setTaskReg((prev) => ({ ...prev, [pid]: updated }));
     saveTask(updated);
@@ -235,6 +291,7 @@ export default function App({ user, onSignOut }) {
   function saveTaskEdit(id, text) {
     text = (text || "").trim();
     if (text) {
+      saveSnapshot();
       const updated = { ...taskReg[id], text };
       setTaskReg((prev) => ({ ...prev, [id]: updated }));
       saveTask(updated);
@@ -245,6 +302,7 @@ export default function App({ user, onSignOut }) {
   function saveSubEdit(pid, sid, text) {
     text = (text || "").trim();
     if (text) {
+      saveSnapshot();
       const t = taskReg[pid]; if (!t) return;
       const updated = { ...t, subtasks: t.subtasks.map((s) => s.id === sid ? { ...s, text } : s) };
       setTaskReg((prev) => ({ ...prev, [pid]: updated }));
@@ -266,6 +324,7 @@ export default function App({ user, onSignOut }) {
 
   function addTask(target, providedText) {
     const text = (providedText ?? drafts[target] ?? "").trim(); if (!text) return;
+    saveSnapshot();
     const claimedDay = target === "week" ? null : target;
     const task = mkTask(text);
 
@@ -288,6 +347,7 @@ export default function App({ user, onSignOut }) {
 
   function addTaskAsSubtask(target, providedText) {
     const text = (providedText ?? drafts[target] ?? "").trim(); if (!text) return;
+    saveSnapshot();
     const claimedDay = target === "week" ? null : target;
     const lastTask   = claimedDay === null
       ? tasks.at(-1)
@@ -304,6 +364,7 @@ export default function App({ user, onSignOut }) {
   function addSubtask(parentId) {
     const k    = `sub-${parentId}`;
     const text = (drafts[k] || "").trim(); if (!text) return;
+    saveSnapshot();
     const t    = taskReg[parentId]; if (!t) return;
     const updated = { ...t, subtasks: [...t.subtasks, mkSub(text)] };
     setTaskReg((prev) => ({ ...prev, [parentId]: updated }));
@@ -313,6 +374,7 @@ export default function App({ user, onSignOut }) {
 
   function claim(id, day) {
     const idx = tasks.findIndex((t) => t.id === id); if (idx < 0) return;
+    saveSnapshot();
     const moved     = { ...tasks[idx], claimedDay: day };
     const rest      = tasks.filter((_, i) => i !== idx);
     const newMerged = placeInGroup(rest, moved);
@@ -321,6 +383,7 @@ export default function App({ user, onSignOut }) {
 
   const claimSub = (pid, sid, day) => {
     const t = taskReg[pid]; if (!t) return;
+    saveSnapshot();
     const updated = { ...t, subtasks: t.subtasks.map((s) => s.id === sid ? { ...s, claimedDay: day } : s) };
     setTaskReg((prev) => ({ ...prev, [pid]: updated }));
     saveTask(updated);
@@ -328,6 +391,7 @@ export default function App({ user, onSignOut }) {
 
   function reorder(id, targetId) {
     if (id === targetId) return;
+    saveSnapshot();
     const list = [...tasks];
     const from = list.findIndex((t) => t.id === id); if (from < 0) return;
     const [moved] = list.splice(from, 1);
@@ -338,6 +402,7 @@ export default function App({ user, onSignOut }) {
 
   function reorderSub(pid, fromSid, targetSid) {
     if (fromSid === targetSid) return;
+    saveSnapshot();
     const t = taskReg[pid]; if (!t) return;
     const subs = [...t.subtasks];
     const from = subs.findIndex((s) => s.id === fromSid); if (from < 0) return;
@@ -351,6 +416,7 @@ export default function App({ user, onSignOut }) {
 
   function promoteSubtask(pid, sid) {
     const t   = taskReg[pid]; if (!t) return;
+    saveSnapshot();
     const sub = t.subtasks.find((s) => s.id === sid); if (!sub) return;
 
     const updatedParent = { ...t, subtasks: t.subtasks.filter((s) => s.id !== sid) };
@@ -399,6 +465,7 @@ export default function App({ user, onSignOut }) {
 
   function dropAsSubtask(parentId) {
     const d = drag.current; if (!d || d.t !== "task" || d.id === parentId) { cleanupDrag(); return; }
+    saveSnapshot();
     const child  = taskReg[d.id]; if (!child) { cleanupDrag(); return; }
     const parent = taskReg[parentId]; if (!parent) { cleanupDrag(); return; }
     const newSubs        = [mkSub(child.text, child.done), ...child.subtasks.map((s) => mkSub(s.text, s.done))];
@@ -429,6 +496,7 @@ export default function App({ user, onSignOut }) {
   };
 
   function confirmCarry(selected) {
+    saveSnapshot();
     const currentList = weekAssign[nowKey] || [];
     const maxPos      = currentList.reduce((m, a) => Math.max(m, a.position), -1);
     const newAssignments = [];
