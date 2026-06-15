@@ -160,20 +160,28 @@ export async function migrateFromWeeksTable(userId) {
     .neq("week_key", "__meta__");
   if (error || !weeksData?.length) return false;
 
-  const taskRows = [];
-  const assignmentRows = [];
-  const seenTaskIds = new Set();
-  // Map old IDs (possibly non-UUID) → new canonical UUIDs
+  // Pass 1: build old-id → canonical UUID map for every task
   const idMap = {};
+  for (const { tasks } of weeksData) {
+    for (const t of (tasks || [])) {
+      if (!idMap[t.id]) idMap[t.id] = toUUID(t.id);
+    }
+  }
+
+  // Pass 2: build task rows (deduplicated) and assignment rows
+  // Carry-over copies (originId set) share the original's canonical ID — no separate task row.
+  const taskMap = {};        // canonicalId → task row
+  const assignmentRows = [];
 
   for (const { week_key, tasks } of weeksData) {
     (tasks || []).forEach((t, idx) => {
-      if (!idMap[t.id]) idMap[t.id] = toUUID(t.id);
-      const canonicalId = idMap[t.id];
+      // If this is a carry-over copy, point to the original's canonical ID
+      const canonicalId = (t.originId && idMap[t.originId])
+        ? idMap[t.originId]
+        : idMap[t.id];
 
-      if (!seenTaskIds.has(canonicalId)) {
-        seenTaskIds.add(canonicalId);
-        taskRows.push({
+      if (!taskMap[canonicalId]) {
+        taskMap[canonicalId] = {
           id:         canonicalId,
           user_id:    userId,
           text:       t.text ?? "",
@@ -187,7 +195,10 @@ export async function migrateFromWeeksTable(userId) {
           notes:      t.notes ?? "",
           created_at: t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        });
+        };
+      } else if (t.done) {
+        // If any version (original or copy) is done, mark the canonical task as done
+        taskMap[canonicalId].done = true;
       }
 
       assignmentRows.push({
@@ -203,6 +214,7 @@ export async function migrateFromWeeksTable(userId) {
     });
   }
 
+  const taskRows = Object.values(taskMap);
   if (!taskRows.length) return false;
 
   const { error: te } = await supabase.from("tasks").insert(taskRows);
