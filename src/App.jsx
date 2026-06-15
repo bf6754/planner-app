@@ -5,6 +5,7 @@ import { uid, mkTask, mkSub, floatDone, placeInGroup } from "./lib/tasks.js";
 import { loadMetaLocal, saveMetaLocal, fetchAllTasks, upsertTask, deleteTaskById, fetchAllAssignments, upsertAssignment, upsertAssignments, deleteAssignment, fetchMeta, upsertMeta, migrateFromWeeksTable, checkCarryOver, getLeftovers } from "./data/store.js";
 import { supabase } from "./data/supabase.js";
 import CarryOverModal from "./components/CarryOverModal.jsx";
+import TaskDetailModal from "./components/TaskDetailModal.jsx";
 import Circle from "./components/Circle.jsx";
 import { Arrow, Plus, Chev } from "./components/Icons.jsx";
 
@@ -19,10 +20,11 @@ const ghost = {
   borderRadius: 8, padding: "6px 13px", fontSize: 12.5,
   fontWeight: 600, cursor: "pointer", color: C.sub, fontFamily: "inherit",
 };
-const delBtn = {
-  background: "none", border: "none", cursor: "pointer", padding: "0 3px",
-  color: C.sub, fontSize: 15, lineHeight: 1, opacity: 0.5, flexShrink: 0,
-  fontFamily: "inherit",
+// Always-visible pill action buttons (pale grey, more contrast on hover via CSS .pill:hover)
+const pill = {
+  fontSize: 10.5, fontFamily: "inherit", background: "transparent",
+  border: "none", borderRadius: 20, padding: "2px 7px",
+  cursor: "pointer", lineHeight: 1.4, whiteSpace: "nowrap",
 };
 
 export default function App({ user, onSignOut }) {
@@ -44,6 +46,7 @@ export default function App({ user, onSignOut }) {
   const [wkOpen,       setWkOpen]       = useState(false);
   const [ov,           setOv]           = useState({});
   const [vw,           setVw]           = useState(() => window.innerWidth);
+  const [openTaskId,   setOpenTaskId]   = useState(null);
 
   const drag     = useRef(null);
   const dropMode = useRef(null);
@@ -230,6 +233,14 @@ export default function App({ user, onSignOut }) {
   // Save a task and track updated_at for echo suppression
   function saveTask(task) {
     upsertTask(user.id, task).then((ts) => { if (ts) taskSavesRef.current[task.id] = ts; });
+  }
+
+  function updateTaskField(id, field, value) {
+    const t = taskReg[id]; if (!t) return;
+    saveSnapshot();
+    const updated = { ...t, [field]: value };
+    setTaskReg((prev) => ({ ...prev, [id]: updated }));
+    saveTask(updated);
   }
 
   // Renumber positions and batch-save all assignments for a week
@@ -628,7 +639,7 @@ export default function App({ user, onSignOut }) {
             <Circle done={task.done} size={view === "day" ? 16 : 18} onClick={() => toggle(task.id)} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
               {isEditing ? (
                 <input
                   id={`edit-${task.id}`}
@@ -638,28 +649,28 @@ export default function App({ user, onSignOut }) {
                     if (e.key === "Escape") { setEditingId(null); }
                   }}
                   onBlur={(e) => saveTaskEdit(task.id, e.target.value)}
-                  style={{ ...editInputStyle, borderBottom: `1.5px solid ${C.accent}` }}
+                  style={{ ...editInputStyle, flex: 1, borderBottom: `1.5px solid ${C.accent}` }}
                 />
               ) : (
                 <span
                   onDoubleClick={(e) => { e.stopPropagation(); startEdit(task.id); }}
-                  style={{ flex: 1, minWidth: 80, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
+                  style={{ flex: 1, minWidth: 0, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
                   {task.text}
-                  {hovered && !addSubFor && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setAddSubFor(task.id); setTimeout(() => document.getElementById(`add-sub-${task.id}`)?.focus(), 0); }}
-                      title="Add subtask"
-                      style={{ ...delBtn, fontSize: 10.5, opacity: 0.4, marginLeft: 6, verticalAlign: "baseline" }}>
-                      + sub
-                    </button>
-                  )}
-                  {hovered && (
-                    <button onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete"
-                      style={{ ...delBtn, marginLeft: 4, verticalAlign: "baseline" }}>×</button>
-                  )}
                 </span>
               )}
-              {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500 }}>{task.claimedDay}</span>}
+              {!isEditing && (
+                <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                  <button className="pill" onClick={(e) => { e.stopPropagation(); setOpenTaskId(task.id); }} title="Open detail"
+                    style={{ ...pill, color: hovered ? C.sub : "rgba(140,144,161,0.35)" }}>↗</button>
+                  {!addSubFor && (
+                    <button className="pill" onClick={(e) => { e.stopPropagation(); setAddSubFor(task.id); setTimeout(() => document.getElementById(`add-sub-${task.id}`)?.focus(), 0); }} title="Add subtask"
+                      style={{ ...pill, color: hovered ? C.sub : "rgba(140,144,161,0.35)" }}>+ sub</button>
+                  )}
+                  <button className="pill" onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete"
+                    style={{ ...pill, color: hovered ? C.sub : "rgba(140,144,161,0.35)" }}>×</button>
+                </div>
+              )}
+              {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500, flexShrink: 0 }}>{task.claimedDay}</span>}
             </div>
 
             {/* subtasks list */}
@@ -719,11 +730,13 @@ export default function App({ user, onSignOut }) {
                         </span>
                       )}
                       {!subEditing && view === "week" && s.claimedDay && <span style={{ fontSize: 11, color: C.sub }}>{s.claimedDay}</span>}
-                      {!subEditing && subHovered && (
-                        <>
-                          <button onClick={(e) => { e.stopPropagation(); promoteSubtask(task.id, s.id); }} title="Lift to task" style={{ ...delBtn, fontSize: 12 }}>↑</button>
-                          <button onClick={(e) => { e.stopPropagation(); deleteSub(task.id, s.id); }} title="Delete subtask" style={delBtn}>×</button>
-                        </>
+                      {!subEditing && (
+                        <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                          <button className="pill" onClick={(e) => { e.stopPropagation(); promoteSubtask(task.id, s.id); }} title="Lift to task"
+                            style={{ ...pill, color: subHovered ? C.sub : "rgba(140,144,161,0.35)" }}>↑</button>
+                          <button className="pill" onClick={(e) => { e.stopPropagation(); deleteSub(task.id, s.id); }} title="Delete subtask"
+                            style={{ ...pill, color: subHovered ? C.sub : "rgba(140,144,161,0.35)" }}>×</button>
+                        </div>
                       )}
                     </div>
                   );
@@ -787,11 +800,13 @@ export default function App({ user, onSignOut }) {
               {sub.text}
             </span>
           )}
-          {!subEditing && subHovered && (
-            <>
-              <button onClick={(e) => { e.stopPropagation(); promoteSubtask(task.id, sub.id); }} title="Lift to task" style={{ ...delBtn, fontSize: 12 }}>↑</button>
-              <button onClick={(e) => { e.stopPropagation(); deleteSub(task.id, sub.id); }} title="Delete subtask" style={delBtn}>×</button>
-            </>
+          {!subEditing && (
+            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+              <button className="pill" onClick={(e) => { e.stopPropagation(); promoteSubtask(task.id, sub.id); }} title="Lift to task"
+                style={{ ...pill, color: subHovered ? C.sub : "rgba(140,144,161,0.35)" }}>↑</button>
+              <button className="pill" onClick={(e) => { e.stopPropagation(); deleteSub(task.id, sub.id); }} title="Delete subtask"
+                style={{ ...pill, color: subHovered ? C.sub : "rgba(140,144,161,0.35)" }}>×</button>
+            </div>
           )}
         </div>
       </div>
@@ -917,6 +932,7 @@ export default function App({ user, onSignOut }) {
         .days-grid { display: grid; grid-template-columns: ${colStr}; gap: 10px; align-items: stretch; }
         .we-grid   { display: grid; grid-template-columns: ${weekendCols}; gap: 10px; align-items: stretch; }
         button:hover { filter: brightness(0.98); }
+        .pill:hover { background: rgba(0,0,0,0.05) !important; }
         ::selection { background: rgba(143,180,232,0.35); }
       `}</style>
 
@@ -997,6 +1013,15 @@ export default function App({ user, onSignOut }) {
 
       {/* carry-over modal */}
       {carry && <CarryOverModal leftovers={carryLeftovers} onConfirm={confirmCarry} onDone={dismissCarry} />}
+
+      {/* task detail modal */}
+      {openTaskId && taskReg[openTaskId] && (
+        <TaskDetailModal
+          task={taskReg[openTaskId]}
+          onClose={() => setOpenTaskId(null)}
+          onUpdate={(field, value) => updateTaskField(openTaskId, field, value)}
+        />
+      )}
     </div>
   );
 }
