@@ -20,12 +20,10 @@ const ghost = {
   borderRadius: 8, padding: "6px 13px", fontSize: 12.5,
   fontWeight: 600, cursor: "pointer", color: C.sub, fontFamily: "inherit",
 };
-// Always-visible pill action buttons (pale grey, more contrast on hover via CSS .pill:hover)
-const pill = {
-  fontSize: 10.5, fontFamily: "inherit", background: "transparent",
-  border: "none", borderRadius: 20, padding: "2px 7px",
-  cursor: "pointer", lineHeight: 1.4, whiteSpace: "nowrap",
-};
+// Always-visible pill action buttons (pale grey, more contrast on hover)
+const pill    = { fontSize: 10.5, fontFamily: "inherit", background: "transparent", border: "1.5px solid", borderRadius: 20, padding: "2px 7px", cursor: "pointer", lineHeight: 1.4, whiteSpace: "nowrap" };
+const pillDim = { color: "rgba(140,144,161,0.35)", borderColor: "rgba(140,144,161,0.2)" };
+const pillLit = { color: C.sub,                   borderColor: "rgba(140,144,161,0.5)" };
 
 export default function App({ user, onSignOut }) {
   const [taskReg,      setTaskReg]      = useState({});       // { id → task }
@@ -654,20 +652,20 @@ export default function App({ user, onSignOut }) {
               ) : (
                 <span
                   onDoubleClick={(e) => { e.stopPropagation(); startEdit(task.id); }}
-                  style={{ flex: 1, minWidth: 0, fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
+                  style={{ ...(mode === "one" && { flex: 1, minWidth: 0 }), fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
                   {task.text}
                 </span>
               )}
               {!isEditing && (
-                <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                <div style={{ display: "flex", gap: 3, flexShrink: 0, ...(mode === "one" && { marginLeft: "auto" }) }}>
                   <button className="pill" onClick={(e) => { e.stopPropagation(); setOpenTaskId(task.id); }} title="Open detail"
-                    style={{ ...pill, color: hovered ? C.sub : "rgba(140,144,161,0.35)" }}>↗</button>
+                    style={{ ...pill, ...(hovered ? pillLit : pillDim) }}>↗</button>
                   {!addSubFor && (
                     <button className="pill" onClick={(e) => { e.stopPropagation(); setAddSubFor(task.id); setTimeout(() => document.getElementById(`add-sub-${task.id}`)?.focus(), 0); }} title="Add subtask"
-                      style={{ ...pill, color: hovered ? C.sub : "rgba(140,144,161,0.35)" }}>+ sub</button>
+                      style={{ ...pill, ...(hovered ? pillLit : pillDim) }}>+ sub</button>
                   )}
                   <button className="pill" onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete"
-                    style={{ ...pill, color: hovered ? C.sub : "rgba(140,144,161,0.35)" }}>×</button>
+                    style={{ ...pill, ...(hovered ? pillLit : pillDim) }}>×</button>
                 </div>
               )}
               {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500, flexShrink: 0 }}>{task.claimedDay}</span>}
@@ -725,17 +723,17 @@ export default function App({ user, onSignOut }) {
                       ) : (
                         <span
                           onDoubleClick={(e) => { e.stopPropagation(); startSubEdit("week", task.id, s.id); }}
-                          style={{ flex: 1, fontSize: fs, color: s.done ? C.sub : "#52545d", textDecoration: s.done ? "line-through" : "none", cursor: "text" }}>
+                          style={{ ...(mode === "one" && { flex: 1 }), fontSize: fs, color: s.done ? C.sub : "#52545d", textDecoration: s.done ? "line-through" : "none", cursor: "text" }}>
                           {s.text}
                         </span>
                       )}
                       {!subEditing && view === "week" && s.claimedDay && <span style={{ fontSize: 11, color: C.sub }}>{s.claimedDay}</span>}
                       {!subEditing && (
-                        <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                        <div style={{ display: "flex", gap: 3, flexShrink: 0, ...(mode === "one" && { marginLeft: "auto" }) }}>
                           <button className="pill" onClick={(e) => { e.stopPropagation(); promoteSubtask(task.id, s.id); }} title="Lift to task"
-                            style={{ ...pill, color: subHovered ? C.sub : "rgba(140,144,161,0.35)" }}>↑</button>
+                            style={{ ...pill, ...(subHovered ? pillLit : pillDim) }}>↑</button>
                           <button className="pill" onClick={(e) => { e.stopPropagation(); deleteSub(task.id, s.id); }} title="Delete subtask"
-                            style={{ ...pill, color: subHovered ? C.sub : "rgba(140,144,161,0.35)" }}>×</button>
+                            style={{ ...pill, ...(subHovered ? pillLit : pillDim) }}>×</button>
                         </div>
                       )}
                     </div>
@@ -796,16 +794,16 @@ export default function App({ user, onSignOut }) {
           ) : (
             <span
               onDoubleClick={(e) => { e.stopPropagation(); startSubEdit("day", task.id, sub.id); }}
-              style={{ flex: 1, fontSize: 13, color: sub.done ? C.sub : "#565860", textDecoration: sub.done ? "line-through" : "none", cursor: "text" }}>
+              style={{ ...(mode === "one" && { flex: 1 }), fontSize: 13, color: sub.done ? C.sub : "#565860", textDecoration: sub.done ? "line-through" : "none", cursor: "text" }}>
               {sub.text}
             </span>
           )}
           {!subEditing && (
-            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+            <div style={{ display: "flex", gap: 3, flexShrink: 0, ...(mode === "one" && { marginLeft: "auto" }) }}>
               <button className="pill" onClick={(e) => { e.stopPropagation(); promoteSubtask(task.id, sub.id); }} title="Lift to task"
-                style={{ ...pill, color: subHovered ? C.sub : "rgba(140,144,161,0.35)" }}>↑</button>
+                style={{ ...pill, ...(subHovered ? pillLit : pillDim) }}>↑</button>
               <button className="pill" onClick={(e) => { e.stopPropagation(); deleteSub(task.id, sub.id); }} title="Delete subtask"
-                style={{ ...pill, color: subHovered ? C.sub : "rgba(140,144,161,0.35)" }}>×</button>
+                style={{ ...pill, ...(subHovered ? pillLit : pillDim) }}>×</button>
             </div>
           )}
         </div>
