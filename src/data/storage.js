@@ -149,6 +149,9 @@ export function saveMetaLocal(meta) {
 
 // ── One-time migration from old weeks table ────────────────────────────────────
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const toUUID  = (id) => UUID_RE.test(id ?? "") ? id : crypto.randomUUID();
+
 export async function migrateFromWeeksTable(userId) {
   const { data: weeksData, error } = await supabase
     .from("weeks")
@@ -160,18 +163,23 @@ export async function migrateFromWeeksTable(userId) {
   const taskRows = [];
   const assignmentRows = [];
   const seenTaskIds = new Set();
+  // Map old IDs (possibly non-UUID) → new canonical UUIDs
+  const idMap = {};
 
   for (const { week_key, tasks } of weeksData) {
     (tasks || []).forEach((t, idx) => {
-      if (!seenTaskIds.has(t.id)) {
-        seenTaskIds.add(t.id);
+      if (!idMap[t.id]) idMap[t.id] = toUUID(t.id);
+      const canonicalId = idMap[t.id];
+
+      if (!seenTaskIds.has(canonicalId)) {
+        seenTaskIds.add(canonicalId);
         taskRows.push({
-          id:         t.id,
+          id:         canonicalId,
           user_id:    userId,
           text:       t.text ?? "",
           done:       t.done ?? false,
           subtasks:   (t.subtasks || []).map((s) => ({
-            id: s.id, text: s.text, done: s.done ?? false, claimedDay: s.claimedDay ?? null,
+            id: toUUID(s.id), text: s.text, done: s.done ?? false, claimedDay: s.claimedDay ?? null,
           })),
           priority:   t.priority ?? null,
           type:       t.type ?? null,
@@ -184,7 +192,7 @@ export async function migrateFromWeeksTable(userId) {
 
       assignmentRows.push({
         id:          crypto.randomUUID(),
-        task_id:     t.id,
+        task_id:     canonicalId,
         user_id:     userId,
         week_key,
         claimed_day: t.claimedDay ?? null,
