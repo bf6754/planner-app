@@ -25,6 +25,8 @@ const pill    = { fontSize: 10.5, fontFamily: "inherit", background: "transparen
 const pillDim = { color: "rgba(140,144,161,0.35)", borderColor: "rgba(140,144,161,0.2)" };
 const pillLit = { color: C.sub,                   borderColor: "rgba(140,144,161,0.5)" };
 
+const PRIORITY_COLOR = { low: "#92CBBA", medium: "#F0C274", high: "#E8887F" };
+
 export default function App({ user, onSignOut }) {
   const [taskReg,      setTaskReg]      = useState({});       // { id → task }
   const [weekAssign,   setWeekAssign]   = useState({});       // { weekKey → [assignment] }
@@ -638,6 +640,9 @@ export default function App({ user, onSignOut }) {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              {task.priority && PRIORITY_COLOR[task.priority] && (
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: PRIORITY_COLOR[task.priority], flexShrink: 0 }} />
+              )}
               {isEditing ? (
                 <input
                   id={`edit-${task.id}`}
