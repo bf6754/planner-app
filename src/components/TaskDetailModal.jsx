@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from "react";
 import C from "../theme.js";
 
 const PRIORITIES = [
@@ -7,7 +8,44 @@ const PRIORITIES = [
   { value: "high",   label: "High",   color: "#E8887F" },
 ];
 
-export default function TaskDetailModal({ task, onClose, onUpdate }) {
+export default function TaskDetailModal({ task, onClose, onUpdate, tagLib = [], tagPalette = [], onCreateTag, onDeleteTag }) {
+  const [tagInput, setTagInput] = useState("");
+  const [showDrop, setShowDrop] = useState(false);
+  const wrapRef                 = useRef(null);
+
+  const activeTags = (task.tag_ids || []).map((id) => tagLib.find((t) => t.id === id)).filter(Boolean);
+  const filtered   = tagInput.trim()
+    ? tagLib.filter((t) => t.name.toLowerCase().includes(tagInput.toLowerCase()))
+    : tagLib;
+  const hasExactMatch = tagLib.some((t) => t.name.toLowerCase() === tagInput.trim().toLowerCase());
+
+  function toggleTag(tagId) {
+    const ids = task.tag_ids || [];
+    onUpdate("tag_ids", ids.includes(tagId) ? ids.filter((i) => i !== tagId) : [...ids, tagId]);
+  }
+
+  function addTagById(tagId) {
+    const ids = task.tag_ids || [];
+    if (!ids.includes(tagId)) onUpdate("tag_ids", [...ids, tagId]);
+    setTagInput(""); setShowDrop(false);
+  }
+
+  function handleCreate() {
+    const name = tagInput.trim(); if (!name) return;
+    const color = tagPalette[tagLib.length % tagPalette.length] || "#A0A4B8";
+    const newTag = onCreateTag(name, color);
+    const ids = task.tag_ids || [];
+    onUpdate("tag_ids", [...ids, newTag.id]);
+    setTagInput(""); setShowDrop(false);
+  }
+
+  useEffect(() => {
+    if (!showDrop) return;
+    const handler = (e) => { if (!wrapRef.current?.contains(e.target)) setShowDrop(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showDrop]);
+
   return (
     <div
       onClick={onClose}
@@ -56,6 +94,74 @@ export default function TaskDetailModal({ task, onClose, onUpdate }) {
                 style={{ fontSize: 12, color: C.sub, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "0 4px" }}>
                 Clear
               </button>
+            )}
+          </div>
+        </div>
+
+        {/* Tags */}
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, color: C.sub, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 8 }}>Tags</div>
+
+          {activeTags.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              {activeTags.map((tag) => (
+                <span key={tag.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 500, color: tag.color, background: tag.color + "1a", border: `1.5px solid ${tag.color}50`, borderRadius: 20, padding: "3px 10px" }}>
+                  {tag.name}
+                  <button onClick={() => toggleTag(tag.id)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: tag.color, padding: 0, lineHeight: 1, fontSize: 14, opacity: 0.7, fontFamily: "inherit" }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div style={{ position: "relative" }} ref={wrapRef}>
+            <input
+              value={tagInput}
+              onChange={(e) => { setTagInput(e.target.value); setShowDrop(true); }}
+              onFocus={() => setShowDrop(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); hasExactMatch && filtered[0] ? addTagById(filtered[0].id) : handleCreate(); }
+                if (e.key === "Escape") { setShowDrop(false); setTagInput(""); }
+              }}
+              placeholder="Add tag…"
+              style={{ border: `1px solid ${C.line2}`, borderRadius: 7, padding: "5px 10px", fontSize: 13, color: C.ink, background: C.bg, fontFamily: "inherit", outline: "none", width: "100%", boxSizing: "border-box" }}
+            />
+
+            {showDrop && (filtered.length > 0 || (tagInput.trim() && !hasExactMatch)) && (
+              <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: C.card, border: `1px solid ${C.line2}`, borderRadius: 8, boxShadow: "0 4px 16px rgba(30,58,95,0.12)", zIndex: 10, overflow: "hidden" }}>
+                {filtered.map((tag) => {
+                  const active = (task.tag_ids || []).includes(tag.id);
+                  return (
+                    <div key={tag.id}
+                      onMouseDown={(e) => { e.preventDefault(); addTagById(tag.id); }}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", cursor: "pointer", fontSize: 13 }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = C.bg}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: tag.color, flexShrink: 0 }} />
+                        <span style={{ color: active ? tag.color : C.ink, fontWeight: active ? 600 : 400 }}>{tag.name}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {active && <span style={{ fontSize: 11, color: tag.color }}>✓</span>}
+                        <button
+                          onMouseDown={(e) => { e.stopPropagation(); onDeleteTag(tag.id); setShowDrop(false); }}
+                          title="Remove from library"
+                          style={{ background: "none", border: "none", cursor: "pointer", color: C.sub, padding: "0 2px", fontSize: 13, opacity: 0.5, fontFamily: "inherit" }}>×</button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {tagInput.trim() && !hasExactMatch && (
+                  <div
+                    onMouseDown={(e) => { e.preventDefault(); handleCreate(); }}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", cursor: "pointer", borderTop: filtered.length ? `1px solid ${C.line}` : "none", fontSize: 13, color: C.ink }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = C.bg}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: tagPalette[tagLib.length % tagPalette.length] || "#A0A4B8", flexShrink: 0 }} />
+                    Create <strong style={{ marginLeft: 4 }}>"{tagInput.trim()}"</strong>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

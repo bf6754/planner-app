@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import C from "./theme.js";
 import { DAYS, MONTHS, WEEKDAYS, WEEKEND, ymd, fmtDate, fmtRange, getMonday, addDays, dayIndex, currentWeekKey } from "./lib/dates.js";
 import { uid, mkTask, mkSub, floatDone, placeInGroup } from "./lib/tasks.js";
-import { loadMetaLocal, saveMetaLocal, fetchAllTasks, upsertTask, deleteTaskById, fetchAllAssignments, upsertAssignment, upsertAssignments, deleteAssignment, fetchMeta, upsertMeta, migrateFromWeeksTable, checkCarryOver, getLeftovers } from "./data/store.js";
+import { loadMetaLocal, saveMetaLocal, fetchAllTasks, upsertTask, deleteTaskById, fetchAllAssignments, upsertAssignment, upsertAssignments, deleteAssignment, fetchMeta, upsertMeta, migrateFromWeeksTable, checkCarryOver, getLeftovers, fetchAllTags, upsertTag, deleteTag } from "./data/store.js";
 import { supabase } from "./data/supabase.js";
 import CarryOverModal from "./components/CarryOverModal.jsx";
 import TaskDetailModal from "./components/TaskDetailModal.jsx";
@@ -47,6 +47,7 @@ export default function App({ user, onSignOut }) {
   const [ov,           setOv]           = useState({});
   const [vw,           setVw]           = useState(() => window.innerWidth);
   const [openTaskId,   setOpenTaskId]   = useState(null);
+  const [tagLib,       setTagLib]       = useState([]);   // [{ id, name, color }]
 
   const drag     = useRef(null);
   const dropMode = useRef(null);
@@ -64,8 +65,9 @@ export default function App({ user, onSignOut }) {
   useEffect(() => {
     const nowKey = currentWeekKey();
 
-    Promise.all([fetchAllTasks(user.id), fetchAllAssignments(user.id), fetchMeta(user.id)])
-      .then(async ([taskData, assignData, remoteMeta]) => {
+    Promise.all([fetchAllTasks(user.id), fetchAllAssignments(user.id), fetchMeta(user.id), fetchAllTags(user.id)])
+      .then(async ([taskData, assignData, remoteMeta, tagsData]) => {
+        setTagLib(tagsData);
         // One-time migration from old weeks table if tasks table is empty
         if (Object.keys(taskData).length === 0) {
           const migrated = await migrateFromWeeksTable(user.id);
@@ -112,6 +114,7 @@ export default function App({ user, onSignOut }) {
             id: r.id, text: r.text, done: r.done, subtasks: r.subtasks ?? [],
             priority: r.priority ?? null, type: r.type ?? null,
             deadline: r.deadline ?? null, notes: r.notes ?? "",
+            tag_ids: r.tag_ids ?? [],
             createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
             updatedAt: r.updated_at,
           }}));
@@ -241,6 +244,30 @@ export default function App({ user, onSignOut }) {
     const updated = { ...t, [field]: value };
     setTaskReg((prev) => ({ ...prev, [id]: updated }));
     saveTask(updated);
+  }
+
+  // ── tag library management ────────────────────────────────────────────────
+  const TAG_PALETTE = ["#8FA0C8", "#92CBBA", "#F4A26B", "#E8887F", "#B09FD4", "#7DC5C5", "#F0C274", "#A8C96E"];
+
+  function createTag(name, color) {
+    const tag = { id: uid(), name: name.trim(), color };
+    setTagLib((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)));
+    upsertTag(user.id, tag);
+    return tag;
+  }
+
+  function deleteTagFromLib(tagId) {
+    setTagLib((prev) => prev.filter((t) => t.id !== tagId));
+    deleteTag(tagId);
+    const updates = {};
+    for (const [id, task] of Object.entries(taskReg)) {
+      if (task.tag_ids?.includes(tagId))
+        updates[id] = { ...task, tag_ids: task.tag_ids.filter((t) => t !== tagId) };
+    }
+    if (Object.keys(updates).length) {
+      setTaskReg((prev) => ({ ...prev, ...updates }));
+      for (const task of Object.values(updates)) saveTask(task);
+    }
   }
 
   // Renumber positions and batch-save all assignments for a week
@@ -676,6 +703,20 @@ export default function App({ user, onSignOut }) {
               {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500, flexShrink: 0 }}>{task.claimedDay}</span>}
             </div>
 
+            {/* tag pills */}
+            {task.tag_ids?.length > 0 && (
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>
+                {task.tag_ids.map((tid) => {
+                  const tag = tagLib.find((t) => t.id === tid);
+                  return tag ? (
+                    <span key={tid} style={{ fontSize: 10, fontWeight: 600, color: tag.color, background: tag.color + "1a", border: `1px solid ${tag.color}40`, borderRadius: 10, padding: "1px 6px" }}>
+                      {tag.name}
+                    </span>
+                  ) : null;
+                })}
+              </div>
+            )}
+
             {/* subtasks list */}
             {subs.length > 0 && (
               <div style={{ marginTop: 5, display: "flex", flexDirection: "column", gap: 4, paddingLeft: 8 }}>
@@ -1023,6 +1064,10 @@ export default function App({ user, onSignOut }) {
           task={taskReg[openTaskId]}
           onClose={() => setOpenTaskId(null)}
           onUpdate={(field, value) => updateTaskField(openTaskId, field, value)}
+          tagLib={tagLib}
+          tagPalette={TAG_PALETTE}
+          onCreateTag={createTag}
+          onDeleteTag={deleteTagFromLib}
         />
       )}
     </div>

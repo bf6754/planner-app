@@ -52,3 +52,22 @@ ALTER TABLE public.user_meta ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "user_meta_own" ON public.user_meta
   FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- v2: Tags — run this block when upgrading from the initial migration
+
+CREATE TABLE IF NOT EXISTS public.tags (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name       TEXT        NOT NULL,
+  color      TEXT        NOT NULL DEFAULT '#A0A4B8',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, name)
+);
+
+ALTER TABLE public.tags ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "tags_own" ON public.tags
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS tag_ids JSONB NOT NULL DEFAULT '[]';

@@ -23,6 +23,7 @@ export async function upsertTask(userId, task) {
     type:       task.type ?? null,
     deadline:   task.deadline ?? null,
     notes:      task.notes ?? "",
+    tag_ids:    task.tag_ids ?? [],
     updated_at: ts,
   }, { onConflict: "id" }).select("updated_at");
   if (error) { console.error("upsertTask:", error.message); return null; }
@@ -44,6 +45,7 @@ function rowToTask(r) {
     type:      r.type ?? null,
     deadline:  r.deadline ?? null,
     notes:     r.notes ?? "",
+    tag_ids:   r.tag_ids ?? [],
     createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
     updatedAt: r.updated_at,
   };
@@ -113,6 +115,31 @@ function assignmentToRow(userId, a, ts) {
     position:    a.position ?? 0,
     updated_at:  ts,
   };
+}
+
+// ── Tags ───────────────────────────────────────────────────────────────────────
+
+export async function fetchAllTags(userId) {
+  const { data, error } = await supabase
+    .from("tags")
+    .select("id, name, color")
+    .eq("user_id", userId)
+    .order("name");
+  if (error) throw error;
+  return (data || []).map((r) => ({ id: r.id, name: r.name, color: r.color }));
+}
+
+export async function upsertTag(userId, tag) {
+  const { error } = await supabase.from("tags").upsert(
+    { id: tag.id, user_id: userId, name: tag.name, color: tag.color },
+    { onConflict: "id" }
+  );
+  if (error) console.error("upsertTag:", error.message);
+}
+
+export async function deleteTag(tagId) {
+  const { error } = await supabase.from("tags").delete().eq("id", tagId);
+  if (error) console.error("deleteTag:", error.message);
 }
 
 // ── Meta ───────────────────────────────────────────────────────────────────────

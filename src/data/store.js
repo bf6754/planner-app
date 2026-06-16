@@ -3,6 +3,7 @@ export {
   fetchAllAssignments, upsertAssignment, upsertAssignments, deleteAssignment,
   fetchMeta, upsertMeta, loadMetaLocal, saveMetaLocal,
   migrateFromWeeksTable,
+  fetchAllTags, upsertTag, deleteTag,
 } from "./storage.js";
 
 import { currentWeekKey } from "../lib/dates.js";

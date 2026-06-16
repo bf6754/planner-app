@@ -13,6 +13,7 @@ export function mkTask(text, overrides = {}) {
     type: null,
     deadline: null,
     notes: "",
+    tag_ids: [],
     ...overrides,
   };
 }
