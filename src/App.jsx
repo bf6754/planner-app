@@ -48,6 +48,7 @@ export default function App({ user, onSignOut }) {
   const [vw,           setVw]           = useState(() => window.innerWidth);
   const [openTaskId,   setOpenTaskId]   = useState(null);
   const [tagLib,       setTagLib]       = useState([]);   // [{ id, name, color }]
+  const [tagDropId,    setTagDropId]    = useState(null); // task id whose tag dropdown is open
 
   const drag     = useRef(null);
   const dropMode = useRef(null);
@@ -161,6 +162,13 @@ export default function App({ user, onSignOut }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!tagDropId) return;
+    const close = () => setTagDropId(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [tagDropId]);
 
   // ── derived ───────────────────────────────────────────────────────────────
   const key      = ymd(monday);
@@ -654,6 +662,7 @@ export default function App({ user, onSignOut }) {
           }
         }}
         style={{
+          position:     "relative",
           borderTop:    overId === task.id ? `2px solid ${C.done}` : "2px solid transparent",
           borderBottom: `1px solid ${C.line}`,
           background:   isSubDrop ? "rgba(170,181,232,0.10)" : "transparent",
@@ -698,6 +707,8 @@ export default function App({ user, onSignOut }) {
                   )}
                   <button className="pill" onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} title="Delete"
                     style={{ ...pill, ...(hovered ? pillLit : pillDim) }}>×</button>
+                  <button className="pill" onClick={(e) => { e.stopPropagation(); setTagDropId((id) => id === task.id ? null : task.id); }} title="Tags"
+                    style={{ ...pill, ...(hovered || tagDropId === task.id ? pillLit : pillDim) }}>#</button>
                 </div>
               )}
               {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500, flexShrink: 0 }}>{task.claimedDay}</span>}
@@ -808,6 +819,51 @@ export default function App({ user, onSignOut }) {
             )}
           </div>
         </div>
+
+        {/* inline tag dropdown */}
+        {tagDropId === task.id && (
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ position: "absolute", top: "100%", left: 0, minWidth: 200, zIndex: 30, background: C.card, border: `1px solid ${C.line2}`, borderRadius: 8, boxShadow: "0 4px 16px rgba(30,58,95,0.12)", overflow: "hidden" }}>
+            {tagLib.length === 0 && <div style={{ padding: "8px 12px", fontSize: 12, color: C.sub }}>No tags yet</div>}
+            {tagLib.map((tag) => {
+              const active = (task.tag_ids || []).includes(tag.id);
+              return (
+                <div key={tag.id}
+                  onClick={() => {
+                    const ids = task.tag_ids || [];
+                    updateTaskField(task.id, "tag_ids", active ? ids.filter((i) => i !== tag.id) : [...ids, tag.id]);
+                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", cursor: "pointer", fontSize: 12.5 }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = C.bg}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                  <div style={{ width: 7, height: 7, borderRadius: "50%", background: tag.color, flexShrink: 0 }} />
+                  <span style={{ flex: 1, color: active ? tag.color : C.ink, fontWeight: active ? 600 : 400 }}>{tag.name}</span>
+                  {active && <span style={{ fontSize: 11, color: tag.color }}>✓</span>}
+                </div>
+              );
+            })}
+            <div style={{ borderTop: tagLib.length ? `1px solid ${C.line}` : "none", padding: "6px 10px" }}>
+              <input
+                autoFocus
+                placeholder="New tag…"
+                style={{ border: "none", outline: "none", background: "transparent", fontSize: 12.5, color: C.ink, fontFamily: "inherit", width: "100%" }}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") {
+                    const name = e.target.value.trim(); if (!name) return;
+                    const color = TAG_PALETTE[tagLib.length % TAG_PALETTE.length];
+                    const newTag = createTag(name, color);
+                    const ids = task.tag_ids || [];
+                    updateTaskField(task.id, "tag_ids", [...ids, newTag.id]);
+                    e.target.value = "";
+                  }
+                  if (e.key === "Escape") setTagDropId(null);
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
     );
   }
