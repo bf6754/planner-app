@@ -6,6 +6,7 @@ import { loadMetaLocal, saveMetaLocal, fetchAllTasks, upsertTask, deleteTaskById
 import { supabase } from "./data/supabase.js";
 import CarryOverModal from "./components/CarryOverModal.jsx";
 import TaskDetailModal from "./components/TaskDetailModal.jsx";
+import TagManagerModal from "./components/TagManagerModal.jsx";
 import Circle from "./components/Circle.jsx";
 import { Arrow, Plus, Chev } from "./components/Icons.jsx";
 
@@ -49,6 +50,7 @@ export default function App({ user, onSignOut }) {
   const [openTaskId,   setOpenTaskId]   = useState(null);
   const [tagLib,       setTagLib]       = useState([]);   // [{ id, name, color }]
   const [tagDropId,    setTagDropId]    = useState(null); // task id whose tag dropdown is open
+  const [tagMgrOpen,   setTagMgrOpen]   = useState(false);
 
   const drag     = useRef(null);
   const dropMode = useRef(null);
@@ -276,6 +278,13 @@ export default function App({ user, onSignOut }) {
       setTaskReg((prev) => ({ ...prev, ...updates }));
       for (const task of Object.values(updates)) saveTask(task);
     }
+  }
+
+  function updateTag(tagId, patch) {
+    const existing = tagLib.find((t) => t.id === tagId); if (!existing) return;
+    const updated = { ...existing, ...patch };
+    setTagLib((prev) => prev.map((t) => t.id === tagId ? updated : t).sort((a, b) => a.name.localeCompare(b.name)));
+    upsertTag(user.id, updated);
   }
 
   // Renumber positions and batch-save all assignments for a week
@@ -1053,6 +1062,7 @@ export default function App({ user, onSignOut }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={openCarryOver} style={ghost}>Carry-over</button>
+          <button onClick={() => setTagMgrOpen(true)} style={ghost}>Manage tags</button>
           <button
             onClick={() => setHideDone((h) => !h)}
             style={{ ...ghost, background: hideDone ? C.done : "transparent", color: hideDone ? C.doneInk : C.sub, borderColor: hideDone ? C.done : C.line2 }}>
@@ -1124,6 +1134,16 @@ export default function App({ user, onSignOut }) {
           tagPalette={TAG_PALETTE}
           onCreateTag={createTag}
           onDeleteTag={deleteTagFromLib}
+        />
+      )}
+
+      {/* tag manager modal */}
+      {tagMgrOpen && (
+        <TagManagerModal
+          tagLib={tagLib}
+          tagPalette={TAG_PALETTE}
+          onUpdateTag={updateTag}
+          onClose={() => setTagMgrOpen(false)}
         />
       )}
     </div>
