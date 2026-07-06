@@ -390,7 +390,7 @@ export default function App({ user, onSignOut }) {
     setTimeout(() => { const el = document.getElementById(`edit-sub-${k}`); if (el) { el.focus(); el.select(); } }, 0);
   }
 
-  function addTask(target, providedText) {
+  async function addTask(target, providedText) {
     const text = (providedText ?? drafts[target] ?? "").trim(); if (!text) return;
     saveSnapshot();
     const claimedDay = target === "week" ? null : target;
@@ -404,13 +404,19 @@ export default function App({ user, onSignOut }) {
     const assignment = { id: uid(), taskId: task.id, weekKey: key, claimedDay, carried: false, position: insertIdx };
     const currentList = weekAssign[key] || [];
     const spliced = [...currentList.slice(0, insertIdx), assignment, ...currentList.slice(insertIdx)];
-    const numbered = saveAssignList(key, spliced);
+    const numbered = spliced.map((a, i) => ({ ...a, position: i }));
 
+    // Optimistic UI update immediately
     setTaskReg((prev) => ({ ...prev, [task.id]: task }));
     setWeekAssign((prev) => ({ ...prev, [key]: numbered }));
-    assignSavesRef.current[assignment.id] = "pending";
-    upsertTask(user.id, task).then((ts) => { if (ts) taskSavesRef.current[task.id] = ts; });
     setDraft(target, "");
+
+    // Save task first — assignment has a FK on task_id so task must exist in DB first
+    const ts = await upsertTask(user.id, task);
+    if (ts) taskSavesRef.current[task.id] = ts;
+    upsertAssignments(user.id, numbered).then((ats) => {
+      if (ats) numbered.forEach((a) => { assignSavesRef.current[a.id] = ats; });
+    });
   }
 
   function addTaskAsSubtask(target, providedText) {
