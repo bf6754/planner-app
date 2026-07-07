@@ -38,7 +38,9 @@ export default function App({ user, onSignOut }) {
   const [drafts,       setDrafts]       = useState({});
   const [carry,        setCarry]        = useState(null);
   const [overId,       setOverId]       = useState(null);
+  const [overBotId,    setOverBotId]    = useState(null);
   const [subDropId,    setSubDropId]    = useState(null);
+  const [draggingId,   setDraggingId]   = useState(null);
   const [hoveredId,    setHoveredId]    = useState(null);
   const [addSubFor,    setAddSubFor]    = useState(null);
   const [subMode,      setSubMode]      = useState(new Set());
@@ -52,8 +54,10 @@ export default function App({ user, onSignOut }) {
   const [tagDropId,    setTagDropId]    = useState(null); // task id whose tag dropdown is open
   const [tagMgrOpen,   setTagMgrOpen]   = useState(false);
 
-  const drag     = useRef(null);
-  const dropMode = useRef(null);
+  const drag         = useRef(null);
+  const dropMode     = useRef(null);
+  const dragAllowed  = useRef(false);
+  const clickTimerRef = useRef(null);
 
   // Echo-suppression: store the updated_at we sent so realtime can skip our own saves
   const taskSavesRef   = useRef({});  // { taskId → updatedAt }
@@ -474,6 +478,17 @@ export default function App({ user, onSignOut }) {
     applyTaskListAndSave(key, list);
   }
 
+  function reorderAfter(id, afterId) {
+    if (id === afterId) return;
+    saveSnapshot();
+    const list = [...tasks];
+    const from = list.findIndex((t) => t.id === id); if (from < 0) return;
+    const [moved] = list.splice(from, 1);
+    const to = list.findIndex((t) => t.id === afterId);
+    list.splice(to + 1, 0, moved);
+    applyTaskListAndSave(key, list);
+  }
+
   function reorderSub(pid, fromSid, targetSid) {
     if (fromSid === targetSid) return;
     saveSnapshot();
@@ -510,7 +525,8 @@ export default function App({ user, onSignOut }) {
   // ── drag helpers ──────────────────────────────────────────────────────────
   const cleanupDrag = () => {
     drag.current = null; dropMode.current = null;
-    setOverId(null); setSubDropId(null);
+    dragAllowed.current = false;
+    setOverId(null); setOverBotId(null); setSubDropId(null); setDraggingId(null);
   };
 
   function dropToDay(day) {
@@ -648,45 +664,68 @@ export default function App({ user, onSignOut }) {
     return (
       <div key={task.id}
         draggable={!isEditing}
+        onMouseDown={() => { dragAllowed.current = false; }}
         onMouseEnter={() => setHoveredId(`${view}:${task.id}`)}
         onMouseLeave={() => setHoveredId((h) => h === `${view}:${task.id}` ? null : h)}
-        onDragStart={(e) => { if (isEditing) { e.preventDefault(); return; } drag.current = { t: "task", id: task.id }; e.dataTransfer.effectAllowed = "move"; }}
+        onDragStart={(e) => {
+          if (isEditing || !dragAllowed.current) { e.preventDefault(); return; }
+          drag.current = { t: "task", id: task.id };
+          setDraggingId(task.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragEnd={() => cleanupDrag()}
         onDragOver={(e) => {
           e.preventDefault();
           if (drag.current?.t !== "task" || drag.current?.id === task.id) return;
-          const rect  = e.currentTarget.getBoundingClientRect();
-          const isTop = (e.clientY - rect.top) / rect.height < 0.38;
-          if (isTop && view === "week") {
-            dropMode.current = { type: "reorder", id: task.id };
-            setOverId(task.id); setSubDropId(null);
-          } else if (!isTop) {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const pct  = (e.clientY - rect.top) / rect.height;
+          if (pct < 0.30 && view === "week") {
+            dropMode.current = { type: "reorder-before", id: task.id };
+            setOverId(task.id); setOverBotId(null); setSubDropId(null);
+          } else if (pct > 0.70 && view === "week") {
+            dropMode.current = { type: "reorder-after", id: task.id };
+            setOverBotId(task.id); setOverId(null); setSubDropId(null);
+          } else {
             dropMode.current = { type: "subtask", id: task.id };
-            setSubDropId(task.id); setOverId(null);
+            setSubDropId(task.id); setOverId(null); setOverBotId(null);
           }
         }}
         onDragLeave={() => {
           setOverId((o) => o === task.id ? null : o);
+          setOverBotId((o) => o === task.id ? null : o);
           setSubDropId((o) => o === task.id ? null : o);
         }}
         onDrop={(e) => {
           if (drag.current?.t !== "task") return;
-          if (dropMode.current?.type === "subtask" && dropMode.current?.id === task.id) {
+          const dm = dropMode.current;
+          if (dm?.type === "subtask" && dm?.id === task.id) {
             e.stopPropagation(); dropAsSubtask(task.id);
-          } else if (view === "week") {
+          } else if (dm?.type === "reorder-before" && view === "week") {
             e.stopPropagation(); reorder(drag.current.id, task.id); cleanupDrag();
+          } else if (dm?.type === "reorder-after" && view === "week") {
+            e.stopPropagation(); reorderAfter(drag.current.id, task.id); cleanupDrag();
           }
         }}
         style={{
           position:     "relative",
           borderTop:    overId === task.id ? `2px solid ${C.done}` : "2px solid transparent",
-          borderBottom: `1px solid ${C.line}`,
+          borderBottom: overBotId === task.id ? `2px solid ${C.done}` : `1px solid ${C.line}`,
           background:   isSubDrop ? "rgba(170,181,232,0.10)" : "transparent",
           padding:      view === "day" ? "7px 2px" : "9px 4px",
           opacity:      task.done ? 0.55 : 1,
-          cursor:       isEditing ? "default" : "grab",
+          cursor:       "default",
+          boxShadow:    draggingId === task.id ? "0 4px 18px rgba(30,58,95,0.18)" : "none",
         }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 9 }}>
-          <div style={{ paddingTop: 1 }}>
+          <div
+            onMouseDown={(e) => { e.stopPropagation(); dragAllowed.current = true; }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              paddingTop: view === "day" ? 3 : 4, cursor: "grab", color: C.sub,
+              opacity: hovered ? 0.35 : 0, transition: "opacity 0.12s",
+              userSelect: "none", flexShrink: 0, fontSize: 13, lineHeight: 1,
+            }}>⠿</div>
+          <div style={{ paddingTop: 1 }} onClick={(e) => e.stopPropagation()}>
             <Circle done={task.done} size={view === "day" ? 16 : 18} onClick={() => toggle(task.id)} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -707,15 +746,22 @@ export default function App({ user, onSignOut }) {
                 />
               ) : (
                 <span
-                  onDoubleClick={(e) => { e.stopPropagation(); startEdit(task.id); }}
-                  style={{ ...(mode === "one" && { flex: 1, minWidth: 0 }), fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "text" }}>
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+                    clickTimerRef.current = setTimeout(() => { setOpenTaskId(task.id); clickTimerRef.current = null; }, 200);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null; }
+                    startEdit(task.id);
+                  }}
+                  style={{ ...(mode === "one" && { flex: 1, minWidth: 0 }), fontSize: fs, lineHeight: 1.35, color: txt, textDecoration: task.done ? "line-through" : "none", wordBreak: "break-word", cursor: "pointer" }}>
                   {task.text}
                 </span>
               )}
               {!isEditing && (
                 <div style={{ display: "flex", gap: 3, flexShrink: 0, ...(mode === "one" && { marginLeft: "auto" }) }}>
-                  <button className="pill" onClick={(e) => { e.stopPropagation(); setOpenTaskId(task.id); }} title="Open detail"
-                    style={{ ...pill, ...(hovered ? pillLit : pillDim) }}>↗</button>
                   {!addSubFor && (
                     <button className="pill" onClick={(e) => { e.stopPropagation(); setAddSubFor(task.id); setTimeout(() => document.getElementById(`add-sub-${task.id}`)?.focus(), 0); }} title="Add subtask"
                       style={{ ...pill, ...(hovered ? pillLit : pillDim) }}>+ sub</button>
