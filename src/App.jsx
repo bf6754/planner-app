@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from "react";
 import C from "./theme.js";
 import { DAYS, MONTHS, WEEKDAYS, WEEKEND, ymd, fmtDate, fmtRange, getMonday, addDays, dayIndex, currentWeekKey } from "./lib/dates.js";
 import { uid, mkTask, mkSub, floatDone, placeInGroup } from "./lib/tasks.js";
-import { loadMetaLocal, saveMetaLocal, fetchAllTasks, upsertTask, deleteTaskById, fetchAllAssignments, upsertAssignment, upsertAssignments, deleteAssignment, fetchMeta, upsertMeta, migrateFromWeeksTable, checkCarryOver, getLeftovers, fetchAllTags, upsertTag, deleteTag } from "./data/store.js";
+import { loadMetaLocal, saveMetaLocal, fetchAllTasks, upsertTask, deleteTaskById, fetchAllAssignments, upsertAssignment, upsertAssignments, deleteAssignment, fetchMeta, upsertMeta, migrateFromWeeksTable, checkCarryOver, getLeftovers, fetchAllTags, upsertTag, deleteTag, fetchAllCategories, upsertCategory, deleteCategory } from "./data/store.js";
 import { supabase } from "./data/supabase.js";
 import CarryOverModal from "./components/CarryOverModal.jsx";
 import TaskDetailModal from "./components/TaskDetailModal.jsx";
 import TagManagerModal from "./components/TagManagerModal.jsx";
+import CategoryManagerModal from "./components/CategoryManagerModal.jsx";
 import Circle from "./components/Circle.jsx";
 import { Arrow, Plus, Chev } from "./components/Icons.jsx";
 
@@ -53,6 +54,10 @@ export default function App({ user, onSignOut }) {
   const [tagLib,       setTagLib]       = useState([]);   // [{ id, name, color }]
   const [tagDropId,    setTagDropId]    = useState(null); // task id whose tag dropdown is open
   const [tagMgrOpen,   setTagMgrOpen]   = useState(false);
+  const [catLib,       setCatLib]       = useState([]);
+  const [catMgrOpen,   setCatMgrOpen]   = useState(false);
+  const [groupByCat,   setGroupByCat]   = useState(false);
+  const [catHeaderDropId, setCatHeaderDropId] = useState(undefined); // cat.id | 'none' | undefined
 
   const drag         = useRef(null);
   const dropMode     = useRef(null);
@@ -72,9 +77,10 @@ export default function App({ user, onSignOut }) {
   useEffect(() => {
     const nowKey = currentWeekKey();
 
-    Promise.all([fetchAllTasks(user.id), fetchAllAssignments(user.id), fetchMeta(user.id), fetchAllTags(user.id)])
-      .then(async ([taskData, assignData, remoteMeta, tagsData]) => {
+    Promise.all([fetchAllTasks(user.id), fetchAllAssignments(user.id), fetchMeta(user.id), fetchAllTags(user.id), fetchAllCategories(user.id)])
+      .then(async ([taskData, assignData, remoteMeta, tagsData, catsData]) => {
         setTagLib(tagsData);
+        setCatLib(catsData);
         // One-time migration from old weeks table if tasks table is empty
         if (Object.keys(taskData).length === 0) {
           const migrated = await migrateFromWeeksTable(user.id);
@@ -122,6 +128,7 @@ export default function App({ user, onSignOut }) {
             priority: r.priority ?? null, type: r.type ?? null,
             deadline: r.deadline ?? null, notes: r.notes ?? "",
             tag_ids: r.tag_ids ?? [],
+            category_id: r.category_id ?? null,
             createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
             updatedAt: r.updated_at,
           }}));
@@ -262,6 +269,7 @@ export default function App({ user, onSignOut }) {
 
   // ── tag library management ────────────────────────────────────────────────
   const TAG_PALETTE = ["#8FA0C8", "#92CBBA", "#F4A26B", "#E8887F", "#B09FD4", "#7DC5C5", "#F0C274", "#A8C96E"];
+  const CAT_PALETTE = ["#E8887F", "#F0C274", "#92CBBA", "#8FA0C8", "#B09FD4", "#7DC5C5", "#F4A26B", "#A8C96E"];
 
   function createTag(name, color) {
     const tag = { id: uid(), name: name.trim(), color };
@@ -289,6 +297,35 @@ export default function App({ user, onSignOut }) {
     const updated = { ...existing, ...patch };
     setTagLib((prev) => prev.map((t) => t.id === tagId ? updated : t).sort((a, b) => a.name.localeCompare(b.name)));
     upsertTag(user.id, updated);
+  }
+
+  // ── category library management ───────────────────────────────────────────────
+  function createCategory(name, color) {
+    const cat = { id: uid(), name: name.trim(), color };
+    setCatLib((prev) => [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)));
+    upsertCategory(user.id, cat);
+    return cat;
+  }
+
+  function deleteCategoryFromLib(catId) {
+    setCatLib((prev) => prev.filter((c) => c.id !== catId));
+    deleteCategory(catId);
+    const updates = {};
+    for (const [id, task] of Object.entries(taskReg)) {
+      if (task.category_id === catId)
+        updates[id] = { ...task, category_id: null };
+    }
+    if (Object.keys(updates).length) {
+      setTaskReg((prev) => ({ ...prev, ...updates }));
+      for (const task of Object.values(updates)) saveTask(task);
+    }
+  }
+
+  function updateCategory(catId, patch) {
+    const existing = catLib.find((c) => c.id === catId); if (!existing) return;
+    const updated = { ...existing, ...patch };
+    setCatLib((prev) => prev.map((c) => c.id === catId ? updated : c).sort((a, b) => a.name.localeCompare(b.name)));
+    upsertCategory(user.id, updated);
   }
 
   // Renumber positions and batch-save all assignments for a week
@@ -439,6 +476,30 @@ export default function App({ user, onSignOut }) {
     setTimeout(() => document.getElementById("add-" + target)?.focus(), 0);
   }
 
+  async function addTaskInCategory(catId, text) {
+    text = (text || "").trim(); if (!text) return;
+    saveSnapshot();
+    const task = { ...mkTask(text), category_id: catId ?? null };
+    // Insert after the last task with this category in the current week list
+    const currentList = weekAssign[key] || [];
+    let insertIdx = tasks.length;
+    if (catId) {
+      const lastIdx = [...tasks].map((t, i) => ({ t, i })).filter(({ t }) => t.category_id === catId).at(-1)?.i;
+      if (lastIdx !== undefined) insertIdx = lastIdx + 1;
+    }
+    const assignment = { id: uid(), taskId: task.id, weekKey: key, claimedDay: null, carried: false, position: insertIdx };
+    const spliced  = [...currentList.slice(0, insertIdx), assignment, ...currentList.slice(insertIdx)];
+    const numbered = spliced.map((a, i) => ({ ...a, position: i }));
+    setTaskReg((prev) => ({ ...prev, [task.id]: task }));
+    setWeekAssign((prev) => ({ ...prev, [key]: numbered }));
+    setDraft(`cat-${catId ?? "none"}`, "");
+    const ts = await upsertTask(user.id, task);
+    if (ts) taskSavesRef.current[task.id] = ts;
+    upsertAssignments(user.id, numbered).then((ats) => {
+      if (ats) numbered.forEach((a) => { assignSavesRef.current[a.id] = ats; });
+    });
+  }
+
   function addSubtask(parentId) {
     const k    = `sub-${parentId}`;
     const text = (drafts[k] || "").trim(); if (!text) return;
@@ -487,6 +548,46 @@ export default function App({ user, onSignOut }) {
     const to = list.findIndex((t) => t.id === afterId);
     list.splice(to + 1, 0, moved);
     applyTaskListAndSave(key, list);
+  }
+
+  // Like reorder/reorderAfter but also assigns the target's category_id to the dragged task when groupByCat
+  function reorderWithCatAssign(dragId, targetId, after) {
+    if (dragId === targetId) return;
+    saveSnapshot();
+    const list = [...tasks];
+    const from = list.findIndex((t) => t.id === dragId); if (from < 0) return;
+    const [moved] = list.splice(from, 1);
+    const to = list.findIndex((t) => t.id === targetId);
+    list.splice(after ? to + 1 : to, 0, moved);
+    applyTaskListAndSave(key, list);
+    if (groupByCat) {
+      const newCatId = taskReg[targetId]?.category_id ?? null;
+      const srcTask  = taskReg[dragId];
+      if (srcTask && srcTask.category_id !== newCatId) {
+        const updated = { ...srcTask, category_id: newCatId };
+        setTaskReg((prev) => ({ ...prev, [dragId]: updated }));
+        saveTask(updated);
+      }
+    }
+  }
+
+  // Assign category and optionally move to top of that section
+  function assignCategoryAndPlace(dragId, catId) {
+    const srcTask = taskReg[dragId]; if (!srcTask) return;
+    saveSnapshot();
+    const updated = { ...srcTask, category_id: catId };
+    setTaskReg((prev) => ({ ...prev, [dragId]: updated }));
+    saveTask(updated);
+    // Move to just before the first task in this category (or stay put if none)
+    const firstInCat = tasks.find((t) => t.id !== dragId && (catId ? t.category_id === catId : !t.category_id));
+    if (firstInCat) {
+      const list = [...tasks];
+      const from = list.findIndex((t) => t.id === dragId); if (from < 0) return;
+      const [movedTask] = list.splice(from, 1);
+      const to = list.findIndex((t) => t.id === firstInCat.id);
+      list.splice(to, 0, movedTask);
+      applyTaskListAndSave(key, list);
+    }
   }
 
   function reorderSub(pid, fromSid, targetSid) {
@@ -701,9 +802,13 @@ export default function App({ user, onSignOut }) {
           if (dm?.type === "subtask" && dm?.id === task.id) {
             e.stopPropagation(); dropAsSubtask(task.id);
           } else if (dm?.type === "reorder-before") {
-            e.stopPropagation(); reorder(drag.current.id, task.id); cleanupDrag();
+            e.stopPropagation();
+            if (groupByCat) { reorderWithCatAssign(drag.current.id, task.id, false); } else { reorder(drag.current.id, task.id); }
+            cleanupDrag();
           } else if (dm?.type === "reorder-after") {
-            e.stopPropagation(); reorderAfter(drag.current.id, task.id); cleanupDrag();
+            e.stopPropagation();
+            if (groupByCat) { reorderWithCatAssign(drag.current.id, task.id, true); } else { reorderAfter(drag.current.id, task.id); }
+            cleanupDrag();
           }
         }}
         style={{
@@ -775,10 +880,18 @@ export default function App({ user, onSignOut }) {
               {!isEditing && view === "week" && task.claimedDay && <span style={{ fontSize: 11, color: C.sub, fontWeight: 500, flexShrink: 0 }}>{task.claimedDay}</span>}
             </div>
 
-            {/* tag pills */}
-            {task.tag_ids?.length > 0 && (
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>
-                {task.tag_ids.map((tid) => {
+            {/* category label (inline, only when not in grouped view) + tag pills */}
+            {(!groupByCat && task.category_id || task.tag_ids?.length > 0) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
+                {!groupByCat && task.category_id && (() => {
+                  const cat = catLib.find((c) => c.id === task.category_id);
+                  return cat ? (
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: cat.color, letterSpacing: 0.4, textTransform: "uppercase" }}>
+                      {cat.name}
+                    </span>
+                  ) : null;
+                })()}
+                {task.tag_ids?.map((tid) => {
                   const tag = tagLib.find((t) => t.id === tid);
                   return tag ? (
                     <span key={tid} style={{ fontSize: 10, fontWeight: 600, color: tag.color, background: tag.color + "1a", border: `1px solid ${tag.color}40`, borderRadius: 10, padding: "1px 6px" }}>
@@ -1006,6 +1119,27 @@ export default function App({ user, onSignOut }) {
     );
   }
 
+  function addSlotCat(catId) {
+    const k = `cat-${catId ?? "none"}`;
+    return (
+      <div key={k} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 4px" }}>
+        <span style={{ width: 13, flexShrink: 0 }} />
+        <span style={{ width: 18, height: 18, minWidth: 18, borderRadius: "50%", border: `2px dashed ${C.line2}`, flexShrink: 0 }} />
+        <input
+          id={`add-${k}`}
+          value={drafts[k] || ""}
+          onChange={(e) => setDraft(k, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") addTaskInCategory(catId, drafts[k] || "");
+            if (e.key === "Escape") setDraft(k, "");
+          }}
+          placeholder="New task…"
+          style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 14, color: C.ink, fontFamily: "inherit" }}
+        />
+      </div>
+    );
+  }
+
   function dayCol(day) {
     const date  = addDays(monday, DAYS.indexOf(day));
     const t     = isToday(day);
@@ -1048,7 +1182,27 @@ export default function App({ user, onSignOut }) {
         {open && (
           <>
             <div style={{ display: "flex", flexDirection: "column" }}>
-              {items.map((it) => it.kind === "task" ? taskRow(it.task, "day", day) : subOnDay(it.task, it.sub))}
+              {groupByCat ? (() => {
+                const dayCatGroups = catLib
+                  .map((cat) => ({ cat, items: items.filter((it) => (it.kind === "task" ? it.task : it.task).category_id === cat.id) }))
+                  .filter((g) => g.items.length > 0);
+                const otherItems = items.filter((it) => {
+                  const catId = (it.kind === "task" ? it.task : it.task).category_id;
+                  return !catId || !catLib.find((c) => c.id === catId);
+                });
+                const allGroups = [...dayCatGroups, ...(otherItems.length > 0 ? [{ cat: null, items: otherItems }] : [])];
+                return allGroups.map(({ cat, items: gItems }, gIdx) => (
+                  <div key={cat?.id ?? "other"}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, padding: gIdx === 0 ? "1px 0 1px" : "5px 0 1px" }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, color: cat ? cat.color : C.sub, textTransform: "uppercase" }}>
+                        {cat ? cat.name : "Other"}
+                      </span>
+                      <div style={{ flex: 1, height: 1, background: cat ? cat.color + "30" : C.line }} />
+                    </div>
+                    {gItems.map((it) => it.kind === "task" ? taskRow(it.task, "day", day) : subOnDay(it.task, it.sub))}
+                  </div>
+                ));
+              })() : items.map((it) => it.kind === "task" ? taskRow(it.task, "day", day) : subOnDay(it.task, it.sub))}
               {addSlot(day, true)}
             </div>
             <div style={{ flex: 1, minHeight: 10, cursor: "text" }} onClick={() => focusAdd(day)} />
@@ -1114,7 +1268,13 @@ export default function App({ user, onSignOut }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={openCarryOver} style={ghost}>Carry-over</button>
+          <button onClick={() => setCatMgrOpen(true)} style={ghost}>Manage categories</button>
           <button onClick={() => setTagMgrOpen(true)} style={ghost}>Manage tags</button>
+          <button
+            onClick={() => setGroupByCat((g) => !g)}
+            style={{ ...ghost, background: groupByCat ? C.done : "transparent", color: groupByCat ? C.doneInk : C.sub, borderColor: groupByCat ? C.done : C.line2 }}>
+            Group by categories
+          </button>
           <button
             onClick={() => setHideDone((h) => !h)}
             style={{ ...ghost, background: hideDone ? C.done : "transparent", color: hideDone ? C.doneInk : C.sub, borderColor: hideDone ? C.done : C.line2 }}>
@@ -1141,14 +1301,51 @@ export default function App({ user, onSignOut }) {
             <div style={{ width: 130, height: 5, background: C.line, borderRadius: 5, overflow: "hidden" }}>
               <div style={{ width: `${pct}%`, height: "100%", background: C.done, transition: "width .3s" }} />
             </div>
-            <button onClick={() => focusAdd("week")} title="Add task"
+            <button onClick={() => focusAdd(groupByCat ? "cat-none" : "week")} title="Add task"
               style={{ display: "flex", alignItems: "center", gap: 5, background: C.accent, color: "#fff", border: "none", borderRadius: 8, padding: "7px 13px", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit", boxShadow: "0 1px 2px rgba(30,58,95,0.18)" }}>
               <Plus s={14} /> Add task
             </button>
           </div>
         </div>
-        {floatDone(vis(tasks), (t) => t.done).map((t) => taskRow(t, "week"))}
-        {addSlot("week", false)}
+        {groupByCat ? (() => {
+          const groups = catLib.map((cat) => ({
+            cat,
+            items: vis(tasks).filter((t) => t.category_id === cat.id),
+          }));
+          const otherItems = vis(tasks).filter((t) => !t.category_id || !catLib.find((c) => c.id === t.category_id));
+          groups.push({ cat: null, items: otherItems });
+          return groups.map(({ cat, items }) => {
+            const dropKey = cat ? cat.id : "none";
+            const isHeaderDrop = catHeaderDropId === dropKey;
+            return (
+              <div key={dropKey}>
+                <div
+                  onDragOver={(e) => { e.preventDefault(); if (drag.current?.t === "task") setCatHeaderDropId(dropKey); }}
+                  onDragLeave={() => setCatHeaderDropId((v) => v === dropKey ? undefined : v)}
+                  onDrop={(e) => {
+                    if (drag.current?.t !== "task") return;
+                    e.stopPropagation();
+                    assignCategoryAndPlace(drag.current.id, cat?.id ?? null);
+                    setCatHeaderDropId(undefined);
+                    cleanupDrag();
+                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px 4px", borderRadius: 6, background: isHeaderDrop ? (cat ? cat.color + "14" : "rgba(140,144,161,0.08)") : "transparent", transition: "background 0.12s", cursor: "default" }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.8, color: cat ? cat.color : C.sub, textTransform: "uppercase", whiteSpace: "nowrap" }}>
+                    {cat ? cat.name : "Other"}
+                  </span>
+                  <div style={{ flex: 1, height: 1, background: cat ? cat.color + "40" : C.line }} />
+                </div>
+                {floatDone(items, (t) => t.done).map((t) => taskRow(t, "week"))}
+                {addSlotCat(cat?.id ?? null)}
+              </div>
+            );
+          });
+        })() : (
+          <>
+            {floatDone(vis(tasks), (t) => t.done).map((t) => taskRow(t, "week"))}
+            {addSlot("week", false)}
+          </>
+        )}
       </div>
 
       {/* weekday grid */}
@@ -1186,6 +1383,8 @@ export default function App({ user, onSignOut }) {
           tagPalette={TAG_PALETTE}
           onCreateTag={createTag}
           onDeleteTag={deleteTagFromLib}
+          catLib={catLib}
+          onSetCategory={(catId) => updateTaskField(openTaskId, "category_id", catId)}
         />
       )}
 
@@ -1196,6 +1395,16 @@ export default function App({ user, onSignOut }) {
           tagPalette={TAG_PALETTE}
           onUpdateTag={updateTag}
           onClose={() => setTagMgrOpen(false)}
+        />
+      )}
+
+      {/* category manager modal */}
+      {catMgrOpen && (
+        <CategoryManagerModal
+          catLib={catLib}
+          catPalette={CAT_PALETTE}
+          onUpdateCategory={updateCategory}
+          onClose={() => setCatMgrOpen(false)}
         />
       )}
     </div>

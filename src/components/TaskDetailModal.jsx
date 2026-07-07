@@ -8,7 +8,7 @@ const PRIORITIES = [
   { value: "high",   label: "High",   color: "#E8887F" },
 ];
 
-export default function TaskDetailModal({ task, onClose, onUpdate, tagLib = [], tagPalette = [], onCreateTag, onDeleteTag }) {
+export default function TaskDetailModal({ task, onClose, onUpdate, tagLib = [], tagPalette = [], onCreateTag, onDeleteTag, catLib = [], onSetCategory }) {
   const [tagInput, setTagInput] = useState("");
   const [showDrop, setShowDrop] = useState(false);
   const wrapRef                 = useRef(null);
@@ -95,6 +95,28 @@ export default function TaskDetailModal({ task, onClose, onUpdate, tagLib = [], 
                 Clear
               </button>
             )}
+          </div>
+        </div>
+
+        {/* Category */}
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, color: C.sub, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 8 }}>Category</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button
+              onClick={() => onSetCategory(null)}
+              style={{ border: `1.5px solid ${(task.category_id == null) ? C.ink : C.line2}`, background: (task.category_id == null) ? C.bg : "transparent", borderRadius: 20, padding: "4px 13px", fontSize: 12.5, fontWeight: 500, cursor: "pointer", color: (task.category_id == null) ? C.ink : C.sub, fontFamily: "inherit" }}>
+              None
+            </button>
+            {catLib.map((cat) => {
+              const active = task.category_id === cat.id;
+              return (
+                <button key={cat.id} onClick={() => onSetCategory(active ? null : cat.id)}
+                  style={{ border: `1.5px solid ${active ? cat.color : C.line2}`, background: active ? cat.color + "28" : "transparent", borderRadius: 20, padding: "4px 13px", fontSize: 12.5, fontWeight: 500, cursor: "pointer", color: active ? cat.color : C.sub, fontFamily: "inherit" }}>
+                  {cat.name}
+                </button>
+              );
+            })}
+            {catLib.length === 0 && <span style={{ fontSize: 12.5, color: C.sub }}>No categories yet — create them from "Manage categories".</span>}
           </div>
         </div>
 

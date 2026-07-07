@@ -23,8 +23,9 @@ export async function upsertTask(userId, task) {
     type:       task.type ?? null,
     deadline:   task.deadline ?? null,
     notes:      task.notes ?? "",
-    tag_ids:    task.tag_ids ?? [],
-    updated_at: ts,
+    tag_ids:     task.tag_ids ?? [],
+    category_id: task.category_id ?? null,
+    updated_at:  ts,
   }, { onConflict: "id" }).select("updated_at");
   if (error) { console.error("upsertTask:", error.message); return null; }
   return data?.[0]?.updated_at ?? null;
@@ -37,17 +38,18 @@ export async function deleteTaskById(taskId) {
 
 function rowToTask(r) {
   return {
-    id:        r.id,
-    text:      r.text,
-    done:      r.done,
-    subtasks:  r.subtasks ?? [],
-    priority:  r.priority ?? null,
-    type:      r.type ?? null,
-    deadline:  r.deadline ?? null,
-    notes:     r.notes ?? "",
-    tag_ids:   r.tag_ids ?? [],
-    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
-    updatedAt: r.updated_at,
+    id:          r.id,
+    text:        r.text,
+    done:        r.done,
+    subtasks:    r.subtasks ?? [],
+    priority:    r.priority ?? null,
+    type:        r.type ?? null,
+    deadline:    r.deadline ?? null,
+    notes:       r.notes ?? "",
+    tag_ids:     r.tag_ids ?? [],
+    category_id: r.category_id ?? null,
+    createdAt:   r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    updatedAt:   r.updated_at,
   };
 }
 
@@ -140,6 +142,31 @@ export async function upsertTag(userId, tag) {
 export async function deleteTag(tagId) {
   const { error } = await supabase.from("tags").delete().eq("id", tagId);
   if (error) console.error("deleteTag:", error.message);
+}
+
+// ── Categories ─────────────────────────────────────────────────────────────────
+
+export async function fetchAllCategories(userId) {
+  const { data, error } = await supabase
+    .from("categories")
+    .select("id, name, color")
+    .eq("user_id", userId)
+    .order("name");
+  if (error) throw error;
+  return (data || []).map((r) => ({ id: r.id, name: r.name, color: r.color }));
+}
+
+export async function upsertCategory(userId, cat) {
+  const { error } = await supabase.from("categories").upsert(
+    { id: cat.id, user_id: userId, name: cat.name, color: cat.color },
+    { onConflict: "id" }
+  );
+  if (error) console.error("upsertCategory:", error.message);
+}
+
+export async function deleteCategory(catId) {
+  const { error } = await supabase.from("categories").delete().eq("id", catId);
+  if (error) console.error("deleteCategory:", error.message);
 }
 
 // ── Meta ───────────────────────────────────────────────────────────────────────

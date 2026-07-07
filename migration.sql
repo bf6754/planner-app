@@ -71,3 +71,22 @@ CREATE POLICY "tags_own" ON public.tags
   FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS tag_ids JSONB NOT NULL DEFAULT '[]';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- v3: Categories
+
+CREATE TABLE IF NOT EXISTS public.categories (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name       TEXT        NOT NULL,
+  color      TEXT        NOT NULL DEFAULT '#A0A4B8',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, name)
+);
+
+ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "categories_own" ON public.categories
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES public.categories(id) ON DELETE SET NULL;
