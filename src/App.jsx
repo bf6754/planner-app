@@ -679,10 +679,10 @@ export default function App({ user, onSignOut }) {
           if (drag.current?.t !== "task" || drag.current?.id === task.id) return;
           const rect = e.currentTarget.getBoundingClientRect();
           const pct  = (e.clientY - rect.top) / rect.height;
-          if (pct < 0.30 && view === "week") {
+          if (pct < 0.30) {
             dropMode.current = { type: "reorder-before", id: task.id };
             setOverId(task.id); setOverBotId(null); setSubDropId(null);
-          } else if (pct > 0.70 && view === "week") {
+          } else if (pct > 0.70) {
             dropMode.current = { type: "reorder-after", id: task.id };
             setOverBotId(task.id); setOverId(null); setSubDropId(null);
           } else {
@@ -700,9 +700,9 @@ export default function App({ user, onSignOut }) {
           const dm = dropMode.current;
           if (dm?.type === "subtask" && dm?.id === task.id) {
             e.stopPropagation(); dropAsSubtask(task.id);
-          } else if (dm?.type === "reorder-before" && view === "week") {
+          } else if (dm?.type === "reorder-before") {
             e.stopPropagation(); reorder(drag.current.id, task.id); cleanupDrag();
-          } else if (dm?.type === "reorder-after" && view === "week") {
+          } else if (dm?.type === "reorder-after") {
             e.stopPropagation(); reorderAfter(drag.current.id, task.id); cleanupDrag();
           }
         }}
