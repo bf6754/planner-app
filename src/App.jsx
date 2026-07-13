@@ -301,8 +301,8 @@ export default function App({ user, onSignOut }) {
 
   // ── category library management ───────────────────────────────────────────────
   function createCategory(name, color) {
-    const cat = { id: uid(), name: name.trim(), color };
-    setCatLib((prev) => [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)));
+    const cat = { id: uid(), name: name.trim(), color, position: catLib.length };
+    setCatLib((prev) => [...prev, cat]);
     upsertCategory(user.id, cat);
     return cat;
   }
@@ -324,8 +324,14 @@ export default function App({ user, onSignOut }) {
   function updateCategory(catId, patch) {
     const existing = catLib.find((c) => c.id === catId); if (!existing) return;
     const updated = { ...existing, ...patch };
-    setCatLib((prev) => prev.map((c) => c.id === catId ? updated : c).sort((a, b) => a.name.localeCompare(b.name)));
+    setCatLib((prev) => prev.map((c) => c.id === catId ? updated : c));
     upsertCategory(user.id, updated);
+  }
+
+  function reorderCategories(newOrder) {
+    const withPos = newOrder.map((cat, i) => ({ ...cat, position: i }));
+    setCatLib(withPos);
+    for (const cat of withPos) upsertCategory(user.id, cat);
   }
 
   // Renumber positions and batch-save all assignments for a week
@@ -1405,6 +1411,7 @@ export default function App({ user, onSignOut }) {
           catPalette={CAT_PALETTE}
           onUpdateCategory={updateCategory}
           onCreateCategory={createCategory}
+          onReorderCategories={reorderCategories}
           onClose={() => setCatMgrOpen(false)}
         />
       )}

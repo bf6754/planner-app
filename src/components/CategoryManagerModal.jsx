@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import C from "../theme.js";
 
-export default function CategoryManagerModal({ catLib, catPalette, onUpdateCategory, onCreateCategory, onClose }) {
+export default function CategoryManagerModal({ catLib, catPalette, onUpdateCategory, onCreateCategory, onReorderCategories, onClose }) {
   const [openColorId, setOpenColorId] = useState(null);
-  const [newName, setNewName] = useState("");
+  const [newName,     setNewName]     = useState("");
+  const [overIdx,     setOverIdx]     = useState(null);
+  const dragIdx = useRef(null);
   const wrapRef = useRef(null);
 
   useEffect(() => {
@@ -12,6 +14,17 @@ export default function CategoryManagerModal({ catLib, catPalette, onUpdateCateg
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [openColorId]);
+
+  function handleDrop(toIdx) {
+    const from = dragIdx.current;
+    if (from == null || from === toIdx) { dragIdx.current = null; setOverIdx(null); return; }
+    const list = [...catLib];
+    const [moved] = list.splice(from, 1);
+    list.splice(toIdx, 0, moved);
+    onReorderCategories(list);
+    dragIdx.current = null;
+    setOverIdx(null);
+  }
 
   return (
     <div
@@ -29,9 +42,23 @@ export default function CategoryManagerModal({ catLib, catPalette, onUpdateCateg
         </div>
 
         {catLib.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {catLib.map((cat) => (
-              <div key={cat.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {catLib.map((cat, idx) => (
+              <div
+                key={cat.id}
+                draggable
+                onDragStart={() => { dragIdx.current = idx; }}
+                onDragOver={(e) => { e.preventDefault(); setOverIdx(idx); }}
+                onDragLeave={() => setOverIdx((v) => v === idx ? null : v)}
+                onDrop={() => handleDrop(idx)}
+                onDragEnd={() => { dragIdx.current = null; setOverIdx(null); }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "4px 0",
+                  borderTop: overIdx === idx ? `2px solid ${C.done}` : "2px solid transparent",
+                }}>
+                {/* drag handle */}
+                <span style={{ fontSize: 13, color: C.sub, opacity: 0.35, cursor: "grab", userSelect: "none", flexShrink: 0 }}>⠿</span>
                 <div style={{ position: "relative" }}>
                   <button
                     onClick={() => setOpenColorId((id) => id === cat.id ? null : cat.id)}

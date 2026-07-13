@@ -149,16 +149,17 @@ export async function deleteTag(tagId) {
 export async function fetchAllCategories(userId) {
   const { data, error } = await supabase
     .from("categories")
-    .select("id, name, color")
+    .select("id, name, color, position")
     .eq("user_id", userId)
+    .order("position")
     .order("name");
   if (error) throw error;
-  return (data || []).map((r) => ({ id: r.id, name: r.name, color: r.color }));
+  return (data || []).map((r, i) => ({ id: r.id, name: r.name, color: r.color, position: r.position ?? i }));
 }
 
 export async function upsertCategory(userId, cat) {
   const { error } = await supabase.from("categories").upsert(
-    { id: cat.id, user_id: userId, name: cat.name, color: cat.color },
+    { id: cat.id, user_id: userId, name: cat.name, color: cat.color, position: cat.position ?? 0 },
     { onConflict: "id" }
   );
   if (error) console.error("upsertCategory:", error.message);

@@ -90,3 +90,5 @@ CREATE POLICY "categories_own" ON public.categories
   FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES public.categories(id) ON DELETE SET NULL;
+
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;
