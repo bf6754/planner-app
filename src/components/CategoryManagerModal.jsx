@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import C from "../theme.js";
 
-export default function CategoryManagerModal({ catLib, catPalette, onUpdateCategory, onClose }) {
+export default function CategoryManagerModal({ catLib, catPalette, onUpdateCategory, onCreateCategory, onClose }) {
   const [openColorId, setOpenColorId] = useState(null);
+  const [newName, setNewName] = useState("");
   const wrapRef = useRef(null);
 
   useEffect(() => {
@@ -27,9 +28,7 @@ export default function CategoryManagerModal({ catLib, catPalette, onUpdateCateg
             style={{ background: "none", border: "none", cursor: "pointer", color: C.sub, fontSize: 20, fontFamily: "inherit", padding: 0, lineHeight: 1 }}>×</button>
         </div>
 
-        {catLib.length === 0 ? (
-          <div style={{ fontSize: 13, color: C.sub }}>No categories yet — add one from any task's detail panel.</div>
-        ) : (
+        {catLib.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {catLib.map((cat) => (
               <div key={cat.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -69,6 +68,39 @@ export default function CategoryManagerModal({ catLib, catPalette, onUpdateCateg
             ))}
           </div>
         )}
+
+        {/* New category input */}
+        <div style={{ borderTop: catLib.length ? `1px solid ${C.line}` : "none", paddingTop: catLib.length ? 14 : 0 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 600, color: C.sub, letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 8 }}>New category</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              autoFocus={catLib.length === 0}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const name = newName.trim(); if (!name) return;
+                  const color = catPalette[catLib.length % catPalette.length];
+                  onCreateCategory(name, color);
+                  setNewName("");
+                }
+                if (e.key === "Escape") setNewName("");
+              }}
+              placeholder="Category name…"
+              style={{ flex: 1, border: `1px solid ${C.line2}`, borderRadius: 7, padding: "5px 10px", fontSize: 13, color: C.ink, background: C.bg, fontFamily: "inherit", outline: "none" }}
+            />
+            <button
+              onClick={() => {
+                const name = newName.trim(); if (!name) return;
+                const color = catPalette[catLib.length % catPalette.length];
+                onCreateCategory(name, color);
+                setNewName("");
+              }}
+              style={{ border: "none", background: C.accent, color: "#fff", borderRadius: 7, padding: "5px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+              Add
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

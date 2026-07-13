@@ -1404,6 +1404,7 @@ export default function App({ user, onSignOut }) {
           catLib={catLib}
           catPalette={CAT_PALETTE}
           onUpdateCategory={updateCategory}
+          onCreateCategory={createCategory}
           onClose={() => setCatMgrOpen(false)}
         />
       )}

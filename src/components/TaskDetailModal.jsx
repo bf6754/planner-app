@@ -116,7 +116,7 @@ export default function TaskDetailModal({ task, onClose, onUpdate, tagLib = [], 
                 </button>
               );
             })}
-            {catLib.length === 0 && <span style={{ fontSize: 12.5, color: C.sub }}>No categories yet — create them from "Manage categories".</span>}
+            {catLib.length === 0 && <span style={{ fontSize: 12.5, color: C.sub }}>No categories yet — create them in "Manage categories".</span>}
           </div>
         </div>
 
