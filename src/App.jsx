@@ -59,10 +59,11 @@ export default function App({ user, onSignOut }) {
   const [groupByCat,   setGroupByCat]   = useState(false);
   const [catHeaderDropId, setCatHeaderDropId] = useState(undefined); // cat.id | 'none' | undefined
 
-  const drag         = useRef(null);
-  const dropMode     = useRef(null);
-  const dragAllowed  = useRef(false);
-  const clickTimerRef = useRef(null);
+  const drag            = useRef(null);
+  const dropMode        = useRef(null);
+  const dragAllowed     = useRef(false);
+  const clickTimerRef   = useRef(null);
+  const subDropTimerRef = useRef(null);
 
   // Echo-suppression: store the updated_at we sent so realtime can skip our own saves
   const taskSavesRef   = useRef({});  // { taskId → updatedAt }
@@ -631,6 +632,7 @@ export default function App({ user, onSignOut }) {
 
   // ── drag helpers ──────────────────────────────────────────────────────────
   const cleanupDrag = () => {
+    if (subDropTimerRef.current) { clearTimeout(subDropTimerRef.current); subDropTimerRef.current = null; }
     drag.current = null; dropMode.current = null;
     dragAllowed.current = false;
     setOverId(null); setOverBotId(null); setSubDropId(null); setDraggingId(null);
@@ -787,22 +789,36 @@ export default function App({ user, onSignOut }) {
           const rect = e.currentTarget.getBoundingClientRect();
           const pct  = (e.clientY - rect.top) / rect.height;
           if (pct < 0.30) {
+            if (subDropTimerRef.current) { clearTimeout(subDropTimerRef.current); subDropTimerRef.current = null; }
             dropMode.current = { type: "reorder-before", id: task.id };
             setOverId(task.id); setOverBotId(null); setSubDropId(null);
           } else if (pct > 0.70) {
+            if (subDropTimerRef.current) { clearTimeout(subDropTimerRef.current); subDropTimerRef.current = null; }
             dropMode.current = { type: "reorder-after", id: task.id };
             setOverBotId(task.id); setOverId(null); setSubDropId(null);
           } else {
-            dropMode.current = { type: "subtask", id: task.id };
-            setSubDropId(task.id); setOverId(null); setOverBotId(null);
+            // Middle zone: only activate subtask after 1.2s hover
+            if (dropMode.current?.type === "subtask" && dropMode.current?.id === task.id) return;
+            if (dropMode.current?.type === "subtask-pending" && dropMode.current?.id === task.id) return;
+            if (subDropTimerRef.current) { clearTimeout(subDropTimerRef.current); subDropTimerRef.current = null; }
+            dropMode.current = { type: "subtask-pending", id: task.id };
+            setOverId(null); setOverBotId(null); setSubDropId(null);
+            subDropTimerRef.current = setTimeout(() => {
+              dropMode.current = { type: "subtask", id: task.id };
+              setSubDropId(task.id);
+              subDropTimerRef.current = null;
+            }, 1200);
           }
         }}
         onDragLeave={() => {
+          if (subDropTimerRef.current) { clearTimeout(subDropTimerRef.current); subDropTimerRef.current = null; }
+          if (dropMode.current?.id === task.id) dropMode.current = null;
           setOverId((o) => o === task.id ? null : o);
           setOverBotId((o) => o === task.id ? null : o);
           setSubDropId((o) => o === task.id ? null : o);
         }}
         onDrop={(e) => {
+          if (subDropTimerRef.current) { clearTimeout(subDropTimerRef.current); subDropTimerRef.current = null; }
           if (drag.current?.t !== "task") return;
           const dm = dropMode.current;
           if (dm?.type === "subtask" && dm?.id === task.id) {
@@ -814,6 +830,11 @@ export default function App({ user, onSignOut }) {
           } else if (dm?.type === "reorder-after") {
             e.stopPropagation();
             if (groupByCat) { reorderWithCatAssign(drag.current.id, task.id, true); } else { reorderAfter(drag.current.id, task.id); }
+            cleanupDrag();
+          } else if (dm?.type === "subtask-pending" && dm?.id === task.id) {
+            // Dropped before timer fired — treat as reorder-before
+            e.stopPropagation();
+            if (groupByCat) { reorderWithCatAssign(drag.current.id, task.id, false); } else { reorder(drag.current.id, task.id); }
             cleanupDrag();
           }
         }}
