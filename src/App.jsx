@@ -1117,16 +1117,13 @@ export default function App({ user, onSignOut }) {
   function addSlot(target, compact) {
     const inSubMode = subMode.has(target);
     const sz = compact ? 16 : 18;
-    const isEmpty = !(drafts[target] || "");
     return (
-      <div key="add" style={{ display: "flex", alignItems: "center", gap: 9, padding: compact ? "7px 2px" : "9px 4px", paddingLeft: inSubMode ? (compact ? 26 : 30) : undefined, opacity: isEmpty ? 0.4 : 1, transition: "opacity 0.15s" }}>
+      <div key="add" style={{ display: "flex", alignItems: "center", gap: 9, padding: compact ? "7px 2px" : "9px 4px", paddingLeft: inSubMode ? (compact ? 26 : 30) : undefined }}>
         <span style={{ width: sz, height: sz, minWidth: sz, borderRadius: "50%", border: `2px dashed ${inSubMode ? C.carryDot : C.line2}`, flexShrink: 0 }} />
         <input
           id={"add-" + target}
           value={drafts[target] || ""}
           onChange={(e) => setDraft(target, e.target.value)}
-          onFocus={(e) => { e.currentTarget.parentElement.style.opacity = "1"; }}
-          onBlur={(e) => { if (!e.currentTarget.value) e.currentTarget.parentElement.style.opacity = "0.4"; }}
           onKeyDown={(e) => {
             const raw = e.target.value;
             if (e.key === "Enter") {
@@ -1142,8 +1139,8 @@ export default function App({ user, onSignOut }) {
               e.preventDefault(); exitSubMode(target);
             }
           }}
-          placeholder={inSubMode ? "New subtask · Enter to add, Backspace to exit" : "New task…"}
-          style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: compact ? 13 : 14, color: inSubMode ? C.carryInk : C.sub, fontFamily: "inherit" }}
+          placeholder={inSubMode ? "New subtask · Enter to add, Backspace to exit" : "New task · Tab to add as subtask"}
+          style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: compact ? 13 : 14, color: inSubMode ? C.carryInk : C.ink, fontFamily: "inherit" }}
         />
       </div>
     );
@@ -1151,23 +1148,20 @@ export default function App({ user, onSignOut }) {
 
   function addSlotCat(catId) {
     const k = `cat-${catId ?? "none"}`;
-    const isEmpty = !(drafts[k] || "");
     return (
-      <div key={k} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 4px", opacity: isEmpty ? 0.4 : 1, transition: "opacity 0.15s" }}>
+      <div key={k} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 4px" }}>
         <span style={{ width: 13, flexShrink: 0 }} />
         <span style={{ width: 18, height: 18, minWidth: 18, borderRadius: "50%", border: `2px dashed ${C.line2}`, flexShrink: 0 }} />
         <input
           id={`add-${k}`}
           value={drafts[k] || ""}
           onChange={(e) => setDraft(k, e.target.value)}
-          onFocus={(e) => { e.currentTarget.parentElement.style.opacity = "1"; }}
-          onBlur={(e) => { if (!e.currentTarget.value) e.currentTarget.parentElement.style.opacity = "0.4"; }}
           onKeyDown={(e) => {
             if (e.key === "Enter") addTaskInCategory(catId, drafts[k] || "");
             if (e.key === "Escape") setDraft(k, "");
           }}
           placeholder="New task…"
-          style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 14, color: C.sub, fontFamily: "inherit" }}
+          style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 14, color: C.ink, fontFamily: "inherit" }}
         />
       </div>
     );
