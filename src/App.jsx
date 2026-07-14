@@ -1140,6 +1140,7 @@ export default function App({ user, onSignOut }) {
             }
           }}
           placeholder={inSubMode ? "New subtask · Enter to add, Backspace to exit" : "New task · Tab to add as subtask"}
+          className="add-input"
           style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: compact ? 13 : 14, color: inSubMode ? C.carryInk : C.ink, fontFamily: "inherit" }}
         />
       </div>
@@ -1161,6 +1162,7 @@ export default function App({ user, onSignOut }) {
             if (e.key === "Escape") setDraft(k, "");
           }}
           placeholder="New task…"
+          className="add-input"
           style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 14, color: C.ink, fontFamily: "inherit" }}
         />
       </div>
@@ -1276,6 +1278,7 @@ export default function App({ user, onSignOut }) {
         button:hover { filter: brightness(0.98); }
         .pill:hover { background: rgba(0,0,0,0.05) !important; }
         ::selection { background: rgba(143,180,232,0.35); }
+        .add-input::placeholder { color: ${C.line2}; }
       `}</style>
 
       {/* header */}
