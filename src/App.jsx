@@ -1424,6 +1424,7 @@ export default function App({ user, onSignOut }) {
           tagLib={tagLib}
           tagPalette={TAG_PALETTE}
           onUpdateTag={updateTag}
+          onDeleteTag={deleteTagFromLib}
           onClose={() => setTagMgrOpen(false)}
         />
       )}
@@ -1435,6 +1436,7 @@ export default function App({ user, onSignOut }) {
           catPalette={CAT_PALETTE}
           onUpdateCategory={updateCategory}
           onCreateCategory={createCategory}
+          onDeleteCategory={deleteCategoryFromLib}
           onReorderCategories={reorderCategories}
           onClose={() => setCatMgrOpen(false)}
         />
