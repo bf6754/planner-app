@@ -1337,45 +1337,47 @@ export default function App({ user, onSignOut }) {
             </button>
           </div>
         </div>
-        {groupByCat ? (() => {
-          const groups = catLib.map((cat) => ({
-            cat,
-            items: vis(tasks).filter((t) => t.category_id === cat.id),
-          }));
-          const otherItems = vis(tasks).filter((t) => !t.category_id || !catLib.find((c) => c.id === t.category_id));
-          groups.push({ cat: null, items: otherItems });
-          return groups.map(({ cat, items }) => {
-            const dropKey = cat ? cat.id : "none";
-            const isHeaderDrop = catHeaderDropId === dropKey;
-            return (
-              <div key={dropKey}>
-                <div
-                  onDragOver={(e) => { e.preventDefault(); if (drag.current?.t === "task") setCatHeaderDropId(dropKey); }}
-                  onDragLeave={() => setCatHeaderDropId((v) => v === dropKey ? undefined : v)}
-                  onDrop={(e) => {
-                    if (drag.current?.t !== "task") return;
-                    e.stopPropagation();
-                    assignCategoryAndPlace(drag.current.id, cat?.id ?? null);
-                    setCatHeaderDropId(undefined);
-                    cleanupDrag();
-                  }}
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px 4px", borderRadius: 6, background: isHeaderDrop ? (cat ? cat.color + "14" : "rgba(140,144,161,0.08)") : "transparent", transition: "background 0.12s", cursor: "default" }}>
-                  <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.8, color: cat ? cat.color : C.sub, textTransform: "uppercase", whiteSpace: "nowrap" }}>
-                    {cat ? cat.name : "Other"}
-                  </span>
-                  <div style={{ flex: 1, height: 1, background: cat ? cat.color + "40" : C.line }} />
+        <div style={{ maxHeight: "min(520px, 52vh)", overflowY: "auto", marginRight: -6, paddingRight: 6 }}>
+          {groupByCat ? (() => {
+            const groups = catLib.map((cat) => ({
+              cat,
+              items: vis(tasks).filter((t) => t.category_id === cat.id),
+            }));
+            const otherItems = vis(tasks).filter((t) => !t.category_id || !catLib.find((c) => c.id === t.category_id));
+            groups.push({ cat: null, items: otherItems });
+            return groups.map(({ cat, items }) => {
+              const dropKey = cat ? cat.id : "none";
+              const isHeaderDrop = catHeaderDropId === dropKey;
+              return (
+                <div key={dropKey}>
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); if (drag.current?.t === "task") setCatHeaderDropId(dropKey); }}
+                    onDragLeave={() => setCatHeaderDropId((v) => v === dropKey ? undefined : v)}
+                    onDrop={(e) => {
+                      if (drag.current?.t !== "task") return;
+                      e.stopPropagation();
+                      assignCategoryAndPlace(drag.current.id, cat?.id ?? null);
+                      setCatHeaderDropId(undefined);
+                      cleanupDrag();
+                    }}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px 4px", borderRadius: 6, background: isHeaderDrop ? (cat ? cat.color + "14" : "rgba(140,144,161,0.08)") : "transparent", transition: "background 0.12s", cursor: "default" }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.8, color: cat ? cat.color : C.sub, textTransform: "uppercase", whiteSpace: "nowrap" }}>
+                      {cat ? cat.name : "Other"}
+                    </span>
+                    <div style={{ flex: 1, height: 1, background: cat ? cat.color + "40" : C.line }} />
+                  </div>
+                  {floatDone(items, (t) => t.done).map((t) => taskRow(t, "week"))}
+                  {addSlotCat(cat?.id ?? null)}
                 </div>
-                {floatDone(items, (t) => t.done).map((t) => taskRow(t, "week"))}
-                {addSlotCat(cat?.id ?? null)}
-              </div>
-            );
-          });
-        })() : (
-          <>
-            {floatDone(vis(tasks), (t) => t.done).map((t) => taskRow(t, "week"))}
-            {addSlot("week", false)}
-          </>
-        )}
+              );
+            });
+          })() : (
+            <>
+              {floatDone(vis(tasks), (t) => t.done).map((t) => taskRow(t, "week"))}
+              {addSlot("week", false)}
+            </>
+          )}
+        </div>
       </div>
 
       {/* weekday grid */}
