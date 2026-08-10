@@ -755,10 +755,10 @@ export default function App({ user, onSignOut }) {
   // ── inlined renderers ─────────────────────────────────────────────────────
 
   function taskRow(task, view, day) {
-    const subs      = floatDone(
-      view === "day" ? task.subtasks.filter((s) => s.claimedDay == null || s.claimedDay === day) : task.subtasks,
-      (s) => s.done
-    );
+    const rawSubs   = view === "day"
+      ? task.subtasks.filter((s) => s.claimedDay == null || s.claimedDay === day)
+      : task.subtasks;
+    const subs      = floatDone(hideDone ? rawSubs.filter((s) => !s.done) : rawSubs, (s) => s.done);
     const txt        = task.done ? C.sub : C.ink;
     const hovered    = hoveredId === `${view}:${task.id}`;
     const isSubDrop  = subDropId === task.id;
