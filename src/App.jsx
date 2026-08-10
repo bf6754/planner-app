@@ -569,7 +569,7 @@ export default function App({ user, onSignOut }) {
     const to = list.findIndex((t) => t.id === targetId);
     list.splice(after ? to + 1 : to, 0, moved);
     applyTaskListAndSave(key, list);
-    if (groupByCat) {
+    if (groupByCat || tabbedWide) {
       const newCatId = taskReg[targetId]?.category_id ?? null;
       const srcTask  = taskReg[dragId];
       if (srcTask && srcTask.category_id !== newCatId) {
