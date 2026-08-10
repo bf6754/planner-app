@@ -58,7 +58,7 @@ export default function App({ user, onSignOut }) {
   const [catMgrOpen,   setCatMgrOpen]   = useState(false);
   const [groupByCat,   setGroupByCat]   = useState(false);
   const [catHeaderDropId, setCatHeaderDropId] = useState(undefined); // cat.id | 'none' | undefined
-  const [view,         setView]         = useState("default"); // "default" | "tabbed"
+  const [viewMode,     setViewMode]     = useState("default"); // "default" | "tabbed"
   const [activeTab,    setActiveTab]    = useState(null);      // category id | "none" | null (auto)
   const [tabDragOverId,setTabDragOverId]= useState(null);
 
@@ -373,8 +373,7 @@ export default function App({ user, onSignOut }) {
     const t = taskReg[pid]; if (!t) return;
     saveSnapshot();
     const subs    = t.subtasks.map((s) => s.id === sid ? { ...s, done: !s.done } : s);
-    const done    = subs.length > 0 && subs.every((s) => s.done);
-    const updated = { ...t, subtasks: subs, done };
+    const updated = { ...t, subtasks: subs };
     setTaskReg((prev) => ({ ...prev, [pid]: updated }));
     saveTask(updated);
   }
@@ -828,16 +827,16 @@ export default function App({ user, onSignOut }) {
             e.stopPropagation(); dropAsSubtask(task.id);
           } else if (dm?.type === "reorder-before") {
             e.stopPropagation();
-            if (groupByCat) { reorderWithCatAssign(drag.current.id, task.id, false); } else { reorder(drag.current.id, task.id); }
+            if (groupByCat || tabbedWide) { reorderWithCatAssign(drag.current.id, task.id, false); } else { reorder(drag.current.id, task.id); }
             cleanupDrag();
           } else if (dm?.type === "reorder-after") {
             e.stopPropagation();
-            if (groupByCat) { reorderWithCatAssign(drag.current.id, task.id, true); } else { reorderAfter(drag.current.id, task.id); }
+            if (groupByCat || tabbedWide) { reorderWithCatAssign(drag.current.id, task.id, true); } else { reorderAfter(drag.current.id, task.id); }
             cleanupDrag();
           } else if (dm?.type === "subtask-pending" && dm?.id === task.id) {
             // Dropped before timer fired — treat as reorder-before
             e.stopPropagation();
-            if (groupByCat) { reorderWithCatAssign(drag.current.id, task.id, false); } else { reorder(drag.current.id, task.id); }
+            if (groupByCat || tabbedWide) { reorderWithCatAssign(drag.current.id, task.id, false); } else { reorder(drag.current.id, task.id); }
             cleanupDrag();
           }
         }}
@@ -1261,10 +1260,13 @@ export default function App({ user, onSignOut }) {
   const weekendCols   = mode === "one" ? "minmax(0,1fr)" : "repeat(2,minmax(0,1fr))";
   const carryLeftovers = carry ? getLeftovers(weekAssign, taskReg, carry, nowKey) : [];
 
+  const tabbedWide = viewMode === "tabbed" && mode !== "one";
+
   // Groups used by tabbed view (always built so they're stable)
+  const otherTabItems = vis(tasks).filter((t) => !t.category_id || !catLib.find((c) => c.id === t.category_id));
   const tabbedGroups = [
     ...catLib.map((cat) => ({ cat, items: vis(tasks).filter((t) => t.category_id === cat.id) })),
-    { cat: null, items: vis(tasks).filter((t) => !t.category_id || !catLib.find((c) => c.id === t.category_id)) },
+    ...(otherTabItems.length > 0 ? [{ cat: null, items: otherTabItems }] : []),
   ];
   const resolvedTab = tabbedGroups.some((g) => (g.cat?.id ?? "none") === activeTab)
     ? activeTab
@@ -1314,8 +1316,8 @@ export default function App({ user, onSignOut }) {
           <button onClick={() => setCatMgrOpen(true)} style={ghost}>Manage categories</button>
           <button onClick={() => setTagMgrOpen(true)} style={ghost}>Manage tags</button>
           <button
-            onClick={() => setView((v) => v === "tabbed" ? "default" : "tabbed")}
-            style={{ ...ghost, background: view === "tabbed" ? C.done : "transparent", color: view === "tabbed" ? C.doneInk : C.sub, borderColor: view === "tabbed" ? C.done : C.line2 }}>
+            onClick={() => setViewMode((v) => v === "tabbed" ? "default" : "tabbed")}
+            style={{ ...ghost, background: viewMode === "tabbed" ? C.done : "transparent", color: viewMode === "tabbed" ? C.doneInk : C.sub, borderColor: viewMode === "tabbed" ? C.done : C.line2 }}>
             Tabbed
           </button>
           <button
@@ -1338,7 +1340,7 @@ export default function App({ user, onSignOut }) {
       </div>
 
       {/* weekly panel */}
-      {view === "tabbed" ? (<>
+      {viewMode === "tabbed" ? (<>
         {/* tabbed view header row */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
           <span style={{ fontSize: 15, fontWeight: 600 }}>This week</span>
